@@ -41,6 +41,41 @@ proc playOut(sim: var Sim, kind = skExpander) =
       raise newException(CogplomacyError, "no pending seats and not done")
     sim.stepPhase(kind)
 
+proc dislodgementEpisode(): Sim =
+  ## An episode with a forced dislodgement, so the retreat events exist:
+  ## Austria takes Venice with a supported attack in Spring 1901 while Italy
+  ## sits still. Every other seat plays the baseline.
+  var sim = initSim(fixtureConfig(years = 1, press = false, seed = 3))
+  sim.board.units.add(Unit(power: 0, kind: ukArmy,
+    province: provinceByCode("TYR"), coast: ""))
+  var guard = 0
+  while not sim.done and guard < 200:
+    inc guard
+    let opening = sim.phase == pkOrders and sim.year == StartYear and
+      sim.season == seSpring
+    for seat in sim.pendingSeats():
+      let power = sim.powerOf[seat]
+      if opening and power == 0:
+        sim.applyOrders(seat, @["F TRI - VEN", "A TYR S F TRI - VEN",
+          "A VIE H", "A BUD H"], "", true)
+      elif opening and power == 4:
+        sim.applyOrders(seat, @["A VEN H", "A ROM H", "F NAP H"], "", true)
+      else:
+        let decision = scriptedDecision(sim, seat, skExpander)
+        case sim.phase
+        of pkPress:
+          sim.applyPress(seat, decision.broadcast, decision.letters,
+            decision.pledges, decision.notes, true)
+        of pkOrders:
+          sim.applyOrders(seat, decision.orders, decision.notes, true)
+        of pkRetreats:
+          sim.applyRetreats(seat, decision.retreats, decision.notes, true)
+        of pkBuilds:
+          sim.applyBuilds(seat, decision.adjustments, decision.notes, true)
+        of pkDone:
+          discard
+  sim
+
 proc ownerTable(sim: Sim): seq[int] =
   for slot in 0 ..< NumCentres:
     result.add(sim.board.owner[slot])
@@ -417,15 +452,16 @@ suite "the two name spaces":
 
 suite "events and replay":
   test "every event kind round-trips through JSON":
-    var sim = initSim(fixtureConfig(years = 3, seed = 5))
-    sim.playOut()
+    var plain = initSim(fixtureConfig(years = 3, seed = 5))
+    plain.playOut()
     var kinds = initHashSet[EventKind]()
-    for event in sim.events:
-      kinds.incl(event.kind)
-      let round = eventFromJson(eventToJson(event))
-      check $eventToJson(round) == $eventToJson(event)
-    for kind in [evStart, evPhase, evPress, evOrders, evAdjudicate,
-        evCentres, evEnd]:
+    for sim in [plain, dislodgementEpisode()]:
+      for event in sim.events:
+        kinds.incl(event.kind)
+        let round = eventFromJson(eventToJson(event))
+        check $eventToJson(round) == $eventToJson(event)
+    ## All nine kinds, retreats and builds included.
+    for kind in EventKind:
       check kind in kinds
 
   test "replayMatch re-derives the whole timeline":
