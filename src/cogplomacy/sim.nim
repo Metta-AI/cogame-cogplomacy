@@ -534,7 +534,8 @@ proc recordHistory(sim: var Sim, adj: Adjudication) =
     record.lines.add(PowerNames[item.order.power] & ": " &
       formatOrder(item.order) & " — " & outcomeWord(item.outcome))
   sim.history.add(record)
-  while sim.history.len > HistoryYears * 2 + 1:
+  ## Exactly the last two game-years: two movement phases a year.
+  while sim.history.len > HistoryYears * 2:
     sim.history.delete(0)
 
 proc resolveOrders(sim: var Sim) =

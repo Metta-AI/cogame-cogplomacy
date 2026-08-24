@@ -300,6 +300,14 @@ proc runGame(runtimeConfig: RuntimeConfig) {.gcsafe.} =
       sleep(100)
 
     withLock stateLock:
+      ## A seat that never delivered a prompt plays the expander baseline for
+      ## the whole episode: a seven-seat game must not stall on one late
+      ## container, and an empty prompt is not a policy.
+      for slot in 0 ..< config.tokens.len:
+        if not state.promptSeen[slot] and state.scripted[slot] == skNone:
+          state.scripted[slot] = skExpander
+          echo "cogplomacy: slot ", slot,
+            " delivered no prompt; playing the expander baseline"
       state.started = true
       echo "cogplomacy: starting with ", state.playerSockets.len, "/",
         config.tokens.len, " players connected"
