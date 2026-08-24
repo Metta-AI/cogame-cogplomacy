@@ -422,6 +422,31 @@ suite "press":
     ## Spectators see everything, immediately.
     check "only you hear this" in $sim.tableStateJson()
 
+suite "stabs":
+  test "a stab is stamped for its turn and comes down at the next press":
+    var sim = initSim(fixtureConfig(years = 1, seed = 3))
+    let france = sim.seatOf[2]
+    for seat in sim.pendingSeats():
+      if seat == france:
+        sim.applyPress(seat, "", @[],
+          @[Pledge(toPower: -1, kind: plKeepOut,
+            province: provinceByCode("BUR"))], "", true)
+      else:
+        sim.applyPress(seat, "", @[], @[], "", true)
+    check sim.phase == pkOrders
+    for seat in sim.pendingSeats():
+      if seat == france:
+        sim.applyOrders(seat, @["A PAR - BUR", "A MAR H", "F BRE H"], "",
+          true)
+      else:
+        let decision = scriptedDecision(sim, seat, skExpander)
+        sim.applyOrders(seat, decision.orders, decision.notes, true)
+    check sim.tableStateJson()["stabs"].len == 1
+    ## The next press phase is a new turn: the stamp comes down.
+    check sim.phase == pkPress
+    sim.applyPress(sim.pendingSeats()[0], "", @[], @[], "", true)
+    check sim.tableStateJson()["stabs"].len == 0
+
 suite "the two name spaces":
   test "policy names never appear in any prompt":
     var config = fixtureConfig(years = 2)

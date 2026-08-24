@@ -974,6 +974,11 @@ proc tableStateJson*(sim: Sim): JsonNode =
   var stabList = newJArray()
   if sim.events.len > 0:
     for index in countdown(sim.events.high, 0):
+      ## The live turn's stabs only. A press or orders event means the next
+      ## turn has begun and last turn's stamps come down, exactly as the
+      ## per-seat `stabbedThisTurn` flag does.
+      if sim.events[index].kind in {evPress, evOrders}:
+        break
       if sim.events[index].kind == evAdjudicate:
         for stab in sim.events[index].stabs:
           stabList.add(%*{"power": stab.power,
