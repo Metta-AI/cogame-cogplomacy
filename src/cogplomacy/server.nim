@@ -326,13 +326,14 @@ proc runGame(runtimeConfig: RuntimeConfig) {.gcsafe.} =
       else: 0.0
     if timeoutSeconds <= 0.0:
       timeoutSeconds = config.episodeTimeoutSeconds.float
-    let playDeadline =
-      if timeoutSeconds > 0.0: gameStart + timeoutSeconds * PlayBudgetFraction
-      else: 0.0
-    if playDeadline > 0.0:
-      echo "cogplomacy: episode timeout ", timeoutSeconds.int, "s (",
-        (if hostedTimeout.len > 0: "from env" else: "assumed"),
-        "); playing until ", (timeoutSeconds * PlayBudgetFraction).int, "s"
+    if timeoutSeconds <= 0.0:
+      ## Play is never open-ended: a config carrying no usable timeout still
+      ## gets the platform default the note names.
+      timeoutSeconds = defaultGameConfig().episodeTimeoutSeconds.float
+    let playDeadline = gameStart + timeoutSeconds * PlayBudgetFraction
+    echo "cogplomacy: episode timeout ", timeoutSeconds.int, "s (",
+      (if hostedTimeout.len > 0: "from env" else: "assumed"),
+      "); playing until ", (timeoutSeconds * PlayBudgetFraction).int, "s"
 
     while true:
       var simCopy: Sim
@@ -344,7 +345,7 @@ proc runGame(runtimeConfig: RuntimeConfig) {.gcsafe.} =
           break
         ## Checked BEFORE every batch: past the budget we settle between
         ## phases and keep the episode rather than losing all of it.
-        if playDeadline > 0.0 and epochTime() > playDeadline:
+        if epochTime() > playDeadline:
           echo "cogplomacy: episode deadline reached after ",
             state.sim.yearsPlayed, "/", config.years,
             " years; ending early"
