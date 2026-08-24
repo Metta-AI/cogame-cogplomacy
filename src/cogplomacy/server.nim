@@ -285,11 +285,10 @@ proc runGame(runtimeConfig: RuntimeConfig) {.gcsafe.} =
         break
       sleep(200)
 
-    ## Give the connected seats a bounded moment to deliver their prompt
-    ## frames before the first batch goes out; a seat that never delivers
-    ## one plays the expander baseline for the whole episode.
-    let promptDeadline = min(deadline, epochTime() + 5.0)
-    while epochTime() < promptDeadline:
+    ## Give the connected seats until the same connect deadline to deliver
+    ## their prompt frames; a seat that never delivers one plays the expander
+    ## baseline for the whole episode.
+    while epochTime() < deadline:
       var allDelivered = true
       withLock stateLock:
         for slot in 0 ..< config.tokens.len:
@@ -518,12 +517,20 @@ proc websocketHandler(
               else: skNone)
             else: parseScriptKind(node.getStr())
           withLock stateLock:
-            state.prompts[slot] = prompt
-            state.scripted[slot] = scripted
-            state.promptSeen[slot] = true
-          echo "cogplomacy: slot ", slot, " delivered a prompt (",
-            prompt.len, " chars",
-            (if scripted != skNone: ", scripted " & $scripted else: ""), ")"
+            if state.started and not state.promptSeen[slot]:
+              ## Play began without this seat's prompt, so it is on the
+              ## expander baseline for the whole episode: a prompt arriving
+              ## now does not take the seat back.
+              echo "cogplomacy: slot ", slot,
+                " delivered a prompt after play started; ignoring it"
+            else:
+              state.prompts[slot] = prompt
+              state.scripted[slot] = scripted
+              state.promptSeen[slot] = true
+              echo "cogplomacy: slot ", slot, " delivered a prompt (",
+                prompt.len, " chars",
+                (if scripted != skNone: ", scripted " & $scripted else: ""),
+                ")"
       except CatchableError as error:
         echo "cogplomacy: ignoring bad player frame: ", error.msg
     of ErrorEvent:
