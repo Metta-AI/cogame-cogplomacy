@@ -137,6 +137,49 @@ suite "expander":
           check disbands == -delta
           check builds == 0
 
+  test "a vacant coastal home centre builds a fleet when fleets trail armies":
+    var sim = initSim(fixtureConfig(years = 2, seed = 4))
+    let power = 5                       # Russia, whose STP has two coasts
+    let seat = sim.seatOf[power]
+    sim.board.units = @[
+      Unit(power: power, kind: ukArmy, province: provinceByCode("MOS")),
+      Unit(power: power, kind: ukArmy, province: provinceByCode("WAR"))
+    ]
+    for slot in 0 ..< NumCentres:
+      sim.board.owner[slot] = -1
+    for code in ["MOS", "WAR", "STP"]:
+      sim.board.owner[CentreIndex[provinceByCode(code)]] = power
+    sim.season = seWinter
+    sim.phase = pkBuilds
+    sim.pending = @[seat]
+    check sim.buildDelta(power) == 1
+    let decision = scriptedDecision(sim, seat, skExpander)
+    check decision.adjustments == @["BUILD F STP/SC"]
+    sim.applyBuilds(seat, decision.adjustments, "", true)
+    var fleets = 0
+    for unit in sim.board.units:
+      if unit.kind == ukFleet:
+        inc fleets
+    check fleets == 1
+
+  test "the hedgehog builds an army in the same place":
+    var sim = initSim(fixtureConfig(years = 2, seed = 4))
+    let power = 5
+    let seat = sim.seatOf[power]
+    sim.board.units = @[
+      Unit(power: power, kind: ukArmy, province: provinceByCode("MOS")),
+      Unit(power: power, kind: ukArmy, province: provinceByCode("WAR"))
+    ]
+    for slot in 0 ..< NumCentres:
+      sim.board.owner[slot] = -1
+    for code in ["MOS", "WAR", "STP"]:
+      sim.board.owner[CentreIndex[provinceByCode(code)]] = power
+    sim.season = seWinter
+    sim.phase = pkBuilds
+    sim.pending = @[seat]
+    check scriptedDecision(sim, seat, skHedgehog).adjustments ==
+      @["BUILD A STP"]
+
 suite "hedgehog":
   test "seven hedgehogs play legal, complete episodes":
     for seed in [1, 5, 9]:

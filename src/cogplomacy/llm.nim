@@ -355,25 +355,34 @@ proc scriptedBuilds(sim: Sim, power: int, kind: ScriptKind): seq[string] =
     if unit.power != power:
       continue
     if unit.kind == ukFleet: inc fleets else: inc armies
+  let sites = buildSites(sim.board, power)
+  var provinces: seq[int]
+  for site in sites:
+    if site.province notin provinces:
+      provinces.add(site.province)
   var built = 0
-  for site in buildSites(sim.board, power):
+  for province in provinces:
     if built >= delta:
       break
-    var wantFleet = false
-    if kind != skHedgehog:
-      wantFleet = site.kind == ukFleet and fleets < armies
-    if site.kind == ukFleet and not wantFleet:
+    ## One build per centre, and the kind is decided once for the centre: a
+    ## fleet when it is coastal and the power holds fewer fleets than armies,
+    ## otherwise an army. Of a split coast's sites take the one with the most
+    ## water to move on, which is what makes `STP` build `F STP/SC`.
+    var chosen = -1
+    if kind != skHedgehog and fleets < armies:
+      for index, site in sites:
+        if site.province != province or site.kind != ukFleet:
+          continue
+        if chosen < 0 or FleetAdj[fleetNode(province, site.coast)].len >
+            FleetAdj[fleetNode(province, sites[chosen].coast)].len:
+          chosen = index
+    if chosen < 0:
+      for index, site in sites:
+        if site.province == province and site.kind == ukArmy and chosen < 0:
+          chosen = index
+    if chosen < 0:
       continue
-    if site.kind == ukFleet and site.coast.len == 0 and
-        fleetNodesOf(site.province).len > 1:
-      continue
-    ## One build per province.
-    var taken = false
-    for existing in result:
-      if provinceCode(site.province) in existing:
-        taken = true
-    if taken:
-      continue
+    let site = sites[chosen]
     result.add("BUILD " & $site.kind & " " & provinceCode(site.province) &
       (if site.coast.len > 0: "/" & site.coast else: ""))
     if site.kind == ukFleet: inc fleets else: inc armies
