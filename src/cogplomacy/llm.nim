@@ -191,6 +191,16 @@ proc fleetGoalDistance(sim: Sim, power: int): seq[int] =
         result[next] = result[node] + 1
         queue.add(next)
 
+type ExpanderTuning* = object
+  ## The two numbers in the expander baseline, kept as data so
+  ## `tools/tune_baselines.nim` can sweep them rather than anyone guessing
+  ## them. The shipped values are the design note's.
+  springHomePenalty*: int   ## ranks a Spring move pays to leave a home centre
+  supportFromRank*: int     ## lowest rank at which a unit supports instead
+
+const DefaultExpanderTuning* = ExpanderTuning(springHomePenalty: 1,
+  supportFromRank: 2)
+
 type MoveOption = object
   dest: int
   coast: string
@@ -212,7 +222,8 @@ proc rankMove(sim: Sim, power: int, unit: Unit, dest: int,
     return 2
   3
 
-proc expanderOrders(sim: Sim, power: int): seq[string] =
+proc expanderOrders*(sim: Sim, power: int,
+    tuning = DefaultExpanderTuning): seq[string] =
   let armyDist = sim.armyGoalDistance(power)
   let fleetDist = sim.fleetGoalDistance(power)
   var mine = sim.unitsOf(power)
@@ -234,7 +245,7 @@ proc expanderOrders(sim: Sim, power: int): seq[string] =
         if sim.season == seSpring and Provinces[unit.province].isCentre and
             Provinces[unit.province].homePower == power and
             sim.board.ownerOf(unit.province) == power:
-          rank += 1
+          rank += tuning.springHomePenalty
         options.add(MoveOption(dest: dest, coast: "", rank: rank, base: base))
     else:
       for node in FleetAdj[unitNode(unit)]:
@@ -244,7 +255,7 @@ proc expanderOrders(sim: Sim, power: int): seq[string] =
         if sim.season == seSpring and Provinces[unit.province].isCentre and
             Provinces[unit.province].homePower == power and
             sim.board.ownerOf(unit.province) == power:
-          rank += 1
+          rank += tuning.springHomePenalty
         options.add(MoveOption(dest: dest, coast: FleetNodeCoast[node],
           rank: rank, base: base))
     options.sort(proc (a, b: MoveOption): int =
@@ -274,7 +285,7 @@ proc expanderOrders(sim: Sim, power: int): seq[string] =
   ## support.
   var moving: seq[bool]
   for entry in chosen:
-    moving.add(entry.dest >= 0 and entry.rank <= 1)
+    moving.add(entry.dest >= 0 and entry.rank < tuning.supportFromRank)
   for index, entry in chosen:
     if not moving[index]:
       var helped = false

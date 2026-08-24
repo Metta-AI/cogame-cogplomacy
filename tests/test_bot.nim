@@ -1,5 +1,6 @@
 import std/[json, strutils, unicode, unittest]
 import cogplomacy/llm
+import ../tools/tune_baselines
 
 ## The scripted baselines: bounded, always legal, and the load-bearing
 ## offline fallback. Reply parsing is exercised here too, because a reply
@@ -233,6 +234,23 @@ suite "a mixed table":
       else:
         hedgehogTotal += sim.centres(seat)
     check expanderTotal > hedgehogTotal
+
+suite "baseline tuning":
+  test "the tuning grid: every cell is legal and the shipped cell leads":
+    ## tools/tune_baselines.nim in miniature, so the grid the expander's two
+    ## numbers were chosen on is in every CI log rather than in someone's
+    ## memory. The shipped cell is the design note's.
+    let cells = sweep(@[1, 2], 2)
+    check cells.len == 9
+    var shipped = -1
+    for cell in cells:
+      echo cellLine(cell)
+      check cell.complete
+      check cell.illegal == 0
+      if cell.tuning == DefaultExpanderTuning:
+        shipped = cell.centres
+        check cell.centres > cell.hedgehog
+    check shipped >= 0
 
 suite "offline fallback":
   test "decideAll with no credentials answers every seat without a network":
