@@ -1234,6 +1234,22 @@ proc eventFromJson*(node: JsonNode): GameEvent =
 
 # ---- Replay -----------------------------------------------------------------
 
+proc sameUnits(recorded, derived: seq[Unit]): bool =
+  if recorded.len != derived.len:
+    return false
+  for index in 0 ..< recorded.len:
+    if not sameUnit(recorded[index], derived[index]):
+      return false
+  true
+
+proc sameOwners(recorded: seq[int], board: Board): bool =
+  if recorded.len != NumCentres:
+    return false
+  for slot in 0 ..< NumCentres:
+    if recorded[slot] != board.owner[slot]:
+      return false
+  true
+
 proc replayMatch*(config: GameConfig, events: seq[GameEvent]): seq[Sim] =
   ## Re-derives the whole state timeline from a recorded event log by
   ## replaying the seats' decisions through the rules. The permutation and
@@ -1245,7 +1261,8 @@ proc replayMatch*(config: GameConfig, events: seq[GameEvent]): seq[Sim] =
   for event in events:
     case event.kind
     of evStart:
-      if event.units.len != sim.board.units.len:
+      if not sameUnits(event.units, sim.board.units) or
+          not sameOwners(event.owners, sim.board):
         raise newException(CogplomacyError,
           "start event does not match the seeded board")
     of evPhase:
@@ -1254,15 +1271,37 @@ proc replayMatch*(config: GameConfig, events: seq[GameEvent]): seq[Sim] =
         raise newException(CogplomacyError,
           "phase " & $event.year & " " & $event.season & " " &
           $event.phaseKind & " does not match the seeded re-derivation")
+      ## The derived board the event carries, checked rather than trusted.
+      if not sameUnits(event.units, sim.board.units) or
+          not sameOwners(event.owners, sim.board) or
+          event.counts != sim.counts():
+        raise newException(CogplomacyError,
+          "the board recorded at " & $event.year & " " & $event.season &
+          " " & $event.phaseKind & " does not match the seeded re-derivation")
     of evPress:
       sim.applyPress(event.seat, event.broadcast, event.letters,
         event.pledges, event.text, event.scripted)
     of evOrders:
       sim.applyOrders(event.seat, event.orders, event.text, event.scripted)
     of evAdjudicate:
-      if event.results.len != sim.lastAdjudication.results.len:
+      let derived = sim.lastAdjudication
+      if event.results.len != derived.results.len or
+          event.dislodged.len != derived.dislodged.len or
+          event.standoffs != derived.standoffs:
         raise newException(CogplomacyError,
           "adjudication does not match the seeded re-derivation")
+      for index in 0 ..< event.results.len:
+        if event.results[index].outcome != derived.results[index].outcome or
+            formatOrder(event.results[index].order) !=
+              formatOrder(derived.results[index].order):
+          raise newException(CogplomacyError,
+            "order result " & formatOrder(event.results[index].order) &
+            " does not match the seeded re-derivation")
+      for index in 0 ..< event.dislodged.len:
+        if not sameUnit(event.dislodged[index].unit,
+            derived.dislodged[index].unit):
+          raise newException(CogplomacyError,
+            "dislodgement does not match the seeded re-derivation")
     of evRetreat:
       var raws: seq[string]
       for move in event.moves:

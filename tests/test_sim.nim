@@ -429,6 +429,29 @@ suite "events and replay":
     check $frames[^1].tableStateJson() == $sim.tableStateJson()
     check frames[^1].reason == sim.reason
 
+  test "replayMatch rejects a recorded board the rules do not re-derive":
+    var sim = initSim(fixtureConfig(years = 1, seed = 6))
+    sim.playOut()
+    ## A phase event whose recorded board has lost a unit.
+    var tampered = sim.events
+    for index in 0 ..< tampered.len:
+      if tampered[index].kind == evPhase and tampered[index].units.len > 0:
+        tampered[index].units.delete(0)
+        break
+    expect CogplomacyError:
+      discard replayMatch(sim.config, tampered)
+    ## An adjudication whose recorded outcome was edited.
+    var flipped = sim.events
+    for index in 0 ..< flipped.len:
+      if flipped[index].kind == evAdjudicate and
+          flipped[index].results.len > 0:
+        flipped[index].results[0].outcome =
+          if flipped[index].results[0].outcome == orSuccess: orBounce
+          else: orSuccess
+        break
+    expect CogplomacyError:
+      discard replayMatch(sim.config, flipped)
+
   test "a deadline stop replays as a deadline":
     var sim = initSim(fixtureConfig(years = 4, seed = 8))
     sim.stepPhase()
