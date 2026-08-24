@@ -606,6 +606,14 @@ proc submitOrders(sim: Sim, power: int, raws: seq[string]):
     if order.illegal:
       result.illegal.add(IllegalRecord(raw: oneLine(raw.strip()),
         why: order.why))
+      ## Step 2: an illegal order becomes `H` for its unit — and that
+      ## consumes the unit's slot, so a later order for the same unit is
+      ## dropped by step 1 rather than played.
+      if order.unit.province >= 0 and order.unit.province notin claimed:
+        claimed.add(order.unit.province)
+        result.orders.add(Order(power: power, unit: order.unit, kind: okHold,
+          target: -1, auxFrom: -1, auxTo: -1,
+          raw: unitLabel(order.unit) & " H"))
       continue
     if order.unit.province in claimed:
       continue

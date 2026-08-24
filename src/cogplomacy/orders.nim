@@ -148,15 +148,33 @@ proc parseLoc(token: string): tuple[province: int, coast: string] =
       result.province = -1
 
 proc badOrder(power: int, raw, why: string): Order =
-  Order(power: power, kind: okHold, target: -1, auxFrom: -1, auxTo: -1,
-    raw: raw, illegal: true, why: why)
+  ## `unit.province` is -1 until `parseOrder` names the unit the order was
+  ## for: an illegal order still consumes that unit's slot.
+  Order(power: power, unit: Unit(power: -1, province: -1), kind: okHold,
+    target: -1, auxFrom: -1, auxTo: -1, raw: raw, illegal: true, why: why)
 
 proc isUnitToken(token: string): bool =
   token in ["A", "F", "ARMY", "FLEET"]
 
-proc parseOrder*(board: Board, power: int, raw: string): Order =
-  ## Parse and legality-check one movement-phase order for `power`.
-  ## Everything the map forbids comes back illegal with a one-word reason.
+proc namedUnit(board: Board, power: int, raw: string): int =
+  ## Index of the power's unit an order names, or -1. Read off the head of
+  ## the order alone, so an order that is illegal further along still says
+  ## which unit it was for.
+  let tokens = normalize(raw)
+  var index = 0
+  if tokens.len > 0 and isUnitToken(tokens[0]):
+    index = 1
+  if index >= tokens.len:
+    return -1
+  let origin = parseLoc(tokens[index])
+  if origin.province < 0:
+    return -1
+  let seat = board.unitAt(origin.province)
+  if seat < 0 or board.units[seat].power != power:
+    return -1
+  seat
+
+proc parseOrderBody(board: Board, power: int, raw: string): Order =
   let tokens = normalize(raw)
   if tokens.len == 0:
     return badOrder(power, raw, "parse")
@@ -315,6 +333,17 @@ proc parseOrder*(board: Board, power: int, raw: string): Order =
     return order
 
   badOrder(power, raw, "parse")
+
+proc parseOrder*(board: Board, power: int, raw: string): Order =
+  ## Parse and legality-check one movement-phase order for `power`.
+  ## Everything the map forbids comes back illegal with a one-word reason,
+  ## carrying the unit it was written for whenever the order names one of
+  ## the power's units — the sim turns that into a hold for the unit.
+  result = parseOrderBody(board, power, raw)
+  if result.illegal:
+    let seat = namedUnit(board, power, raw)
+    if seat >= 0:
+      result.unit = board.units[seat]
 
 # ---- Legal-order enumeration ------------------------------------------------
 

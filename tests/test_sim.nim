@@ -125,6 +125,22 @@ suite "phase sequencing":
     check sim.phase == pkPress
     check sim.season == seFall
 
+suite "order submission":
+  test "an illegal order holds its unit and a later order for it is dropped":
+    var sim = initSim(fixtureConfig(years = 1, press = false))
+    let power = 2                       # France: A PAR is on the board
+    let seat = sim.seatOf[power]
+    sim.applyOrders(seat, @["A PAR - ENG", "A PAR - BUR"], "", true)
+    var ordersEvent: GameEvent
+    for event in sim.events:
+      if event.kind == evOrders and event.power == power:
+        ordersEvent = event
+    check ordersEvent.illegal.len == 1
+    check ordersEvent.illegal[0].why == "wrongunit"
+    ## Step 2 holds the unit, step 1 drops the second order for it.
+    check "A PAR H" in ordersEvent.orders
+    check "A PAR - BUR" notin ordersEvent.orders
+
 suite "ownership":
   test "ownership changes only after Fall retreats":
     var sim = initSim(fixtureConfig(years = 1))
