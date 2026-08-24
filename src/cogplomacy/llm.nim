@@ -194,7 +194,8 @@ proc fleetGoalDistance(sim: Sim, power: int): seq[int] =
 type MoveOption = object
   dest: int
   coast: string
-  rank: int
+  rank: int    ## with the Spring home-centre penalty, for ordering
+  base: int    ## the note's (a)/(b)/(c)/(d) before that penalty
 
 proc rankMove(sim: Sim, power: int, unit: Unit, dest: int,
     originDist, destDist: int): int =
@@ -226,29 +227,31 @@ proc expanderOrders(sim: Sim, power: int): seq[string] =
     var options: seq[MoveOption]
     if unit.kind == ukArmy:
       for dest in ArmyAdj[unit.province]:
-        var rank = sim.rankMove(power, unit, dest, originDist, armyDist[dest])
+        let base = sim.rankMove(power, unit, dest, originDist, armyDist[dest])
+        var rank = base
         ## In Spring, a move that vacates an owned, unoccupied home centre
         ## drops one rank; in Fall the centres are taken regardless.
         if sim.season == seSpring and Provinces[unit.province].isCentre and
             Provinces[unit.province].homePower == power and
             sim.board.ownerOf(unit.province) == power:
           rank += 1
-        options.add(MoveOption(dest: dest, coast: "", rank: rank))
+        options.add(MoveOption(dest: dest, coast: "", rank: rank, base: base))
     else:
       for node in FleetAdj[unitNode(unit)]:
         let dest = FleetNodeProvince[node]
-        var rank = sim.rankMove(power, unit, dest, originDist, fleetDist[node])
+        let base = sim.rankMove(power, unit, dest, originDist, fleetDist[node])
+        var rank = base
         if sim.season == seSpring and Provinces[unit.province].isCentre and
             Provinces[unit.province].homePower == power and
             sim.board.ownerOf(unit.province) == power:
           rank += 1
         options.add(MoveOption(dest: dest, coast: FleetNodeCoast[node],
-          rank: rank))
+          rank: rank, base: base))
     options.sort(proc (a, b: MoveOption): int =
       if a.rank != b.rank: cmp(a.rank, b.rank)
       elif a.dest != b.dest: cmp(provinceCode(a.dest), provinceCode(b.dest))
       else: cmp(a.coast, b.coast))
-    var picked = MoveOption(dest: -1, coast: "", rank: 3)
+    var picked = MoveOption(dest: -1, coast: "", rank: 3, base: 3)
     for option in options:
       if option.rank > 2:
         break
@@ -262,24 +265,38 @@ proc expanderOrders(sim: Sim, power: int): seq[string] =
       break
     if picked.dest >= 0:
       claimed.add(picked.dest)
-    chosen.add((unit, picked.dest, picked.coast, picked.rank))
+    chosen.add((unit, picked.dest, picked.coast, picked.base))
 
+  ## A unit whose own best option is only rank (c) — a move that merely
+  ## closes the distance — or (d) supports one of ours that is moving
+  ## instead, whenever it can reach that destination. Only units that are
+  ## really moving are supported, so the baseline never writes a void
+  ## support.
+  var moving: seq[bool]
   for entry in chosen:
-    if entry.dest >= 0:
+    moving.add(entry.dest >= 0 and entry.rank <= 1)
+  for index, entry in chosen:
+    if not moving[index]:
+      var helped = false
+      for other in 0 ..< chosen.len:
+        if other == index or not moving[other]:
+          continue
+        if not canReach(entry.unit, chosen[other].dest):
+          continue
+        result.add(unitLabel(entry.unit) & " S " &
+          $chosen[other].unit.kind & " " &
+          provinceCode(chosen[other].unit.province) & " - " &
+          provinceCode(chosen[other].dest))
+        helped = true
+        break
+      if helped:
+        continue
+      if entry.dest >= 0:
+        moving[index] = true
+    if moving[index]:
       result.add(unitLabel(entry.unit) & " - " & provinceCode(entry.dest) &
         (if entry.coast.len > 0: "/" & entry.coast else: ""))
-      continue
-    ## No move worth making: help a neighbour of ours that is moving.
-    var helped = false
-    for other in chosen:
-      if helped or other.dest < 0 or sameUnit(other.unit, entry.unit):
-        continue
-      if not canReach(entry.unit, other.dest):
-        continue
-      result.add(unitLabel(entry.unit) & " S " & $other.unit.kind & " " &
-        provinceCode(other.unit.province) & " - " & provinceCode(other.dest))
-      helped = true
-    if not helped:
+    else:
       result.add(unitLabel(entry.unit) & " H")
 
 proc hedgehogOrders(sim: Sim, power: int): seq[string] =

@@ -137,6 +137,26 @@ suite "expander":
           check disbands == -delta
           check builds == 0
 
+  test "a unit that would only close the distance supports a neighbour":
+    ## RUH's best move of its own is HOL, which merely closes the distance —
+    ## rank (c) — while BUR is taking a centre it can reach, so RUH backs
+    ## that move instead of making its own.
+    var sim = initSim(fixtureConfig(years = 1, press = false))
+    let power = 2                       # France
+    let seat = sim.seatOf[power]
+    sim.board.units = @[
+      Unit(power: power, kind: ukArmy, province: provinceByCode("BUR")),
+      Unit(power: power, kind: ukArmy, province: provinceByCode("RUH")),
+      Unit(power: 3, kind: ukArmy, province: provinceByCode("HOL"))
+    ]
+    for slot in 0 ..< NumCentres:
+      sim.board.owner[slot] = power
+    sim.board.owner[CentreIndex[provinceByCode("BEL")]] = 3
+    sim.board.owner[CentreIndex[provinceByCode("HOL")]] = 3
+    let orders = scriptedDecision(sim, seat, skExpander).orders
+    check "A BUR - BEL" in orders
+    check "A RUH S A BUR - BEL" in orders
+
   test "a vacant coastal home centre builds a fleet when fleets trail armies":
     var sim = initSim(fixtureConfig(years = 2, seed = 4))
     let power = 5                       # Russia, whose STP has two coasts
