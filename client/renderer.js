@@ -111,6 +111,7 @@
     var names = POWER_SPRITE.concat(["arena_floor.png"]);
     loadImages(assetBase, names, function (images) {
       loadMap(assetBase, function (map) {
+        diploLearnProvinces(map);
         onReady({
           draw: function (view) { draw(ctx, canvas, images, map, view); },
           map: map
@@ -1420,6 +1421,82 @@
     }
   }
 
+  // The feed reads in words, so it needs the map's province names. The map
+  // is data the renderer fetches; makeRenderer hands it here as soon as it
+  // has it, and every lookup falls back to the code (or to a wording that
+  // names no province at all) if the fetch failed.
+  var DIPLO_PROVINCE_NAMES = {};
+  var DIPLO_PROVINCE_CODES = [];
+
+  function diploLearnProvinces(map) {
+    if (!map || !map.provinces) return;
+    Object.keys(map.provinces).forEach(function (code) {
+      var province = map.provinces[code];
+      DIPLO_PROVINCE_NAMES[code] = province.name || code;
+      if (typeof province.id === "number") {
+        DIPLO_PROVINCE_CODES[province.id] = code;
+      }
+    });
+  }
+
+  // "BUR" -> "Burgundy"; "STP/SC" -> "St Petersburg (SC)".
+  function diploPlaceWords(code) {
+    var text = String(code || "").trim().toUpperCase();
+    if (!text) return "";
+    var slash = text.indexOf("/");
+    var base = slash < 0 ? text : text.slice(0, slash);
+    var name = DIPLO_PROVINCE_NAMES[base] || base;
+    return slash < 0 ? name : name + " (" + text.slice(slash + 1) + ")";
+  }
+
+  // Events name provinces by the sim's province id.
+  function diploProvinceWords(id) {
+    if (typeof id !== "number" || id < 0) return "";
+    return diploPlaceWords(DIPLO_PROVINCE_CODES[id] || "");
+  }
+
+  // One order in canonical notation, spelled out: "A PAR - BUR" reads
+  // "Paris → Burgundy", "F BRE S A PAR - BUR" reads "Brest supports
+  // Paris → Burgundy". Anything that does not parse prints as it came.
+  function diploOrderWords(text) {
+    var parts = String(text || "").trim().toUpperCase().split(/\s+/);
+    if (parts.length < 2) return text;
+    if (DIPLO_PROVINCE_CODES.length > 0 &&
+        !DIPLO_PROVINCE_NAMES[parts[1].split("/")[0]]) {
+      return text;              // not an order this map can spell out
+    }
+    var origin = diploPlaceWords(parts[1]);
+    if (!origin) return text;
+    var verb = parts[2];
+    if (!verb || verb === "H" || verb === "HOLD" || verb === "HOLDS") {
+      return origin + " holds";
+    }
+    if (verb === "-" && parts.length > 3) {
+      return origin + " → " + diploPlaceWords(parts[3]) +
+        (parts.indexOf("VIA") > 2 ? " by convoy" : "");
+    }
+    if ((verb === "S" || verb === "SUPPORT") && parts.length > 4) {
+      var aux = diploPlaceWords(parts[4]);
+      if (parts[5] === "-" && parts.length > 6) {
+        return origin + " supports " + aux + " → " + diploPlaceWords(parts[6]);
+      }
+      return origin + " supports " + aux;
+    }
+    if ((verb === "C" || verb === "CONVOY") && parts.length > 6) {
+      return origin + " convoys " + diploPlaceWords(parts[4]) + " → " +
+        diploPlaceWords(parts[6]);
+    }
+    return text;
+  }
+
+  // A move as its two places, for an adjudication line.
+  function diploMoveWords(order) {
+    var from = diploProvinceWords(order && order.unit && order.unit.province);
+    var to = diploProvinceWords(order && order.target);
+    if (!from) return "";
+    return to ? from + " → " + to : from;
+  }
+
   // Everything a feed line needs, in words a casual spectator can read —
   // "Burgundy", "STANDOFF", "6 centres", never "p42" or "okSupportMove".
   function diploFeedLines(event, nameMap, ctx) {
@@ -1456,53 +1533,72 @@
         break;
       }
       case "orders": {
-        var written = (event.orders || []).join("; ");
-        push("feed-order", powerWord(event.power) + " orders: " + written,
+        var written = (event.orders || []).map(diploOrderWords).join("; ");
+        push("feed-order", powerWord(event.power) + " orders " + written + ".",
           event.power);
         (event.illegal || []).forEach(function (bad) {
-          push("feed-illegal", powerWord(event.power) + " ordered “" +
-            bad.raw + "” — " + diploWhyWords(bad.why) + "; it holds.",
+          push("feed-illegal", powerWord(event.power) + " ordered " +
+            diploOrderWords(bad.raw) + " — " + diploWhyWords(bad.why) +
+            "; it holds.",
           event.power);
         });
         break;
       }
       case "adjudicate": {
         (event.results || []).forEach(function (item) {
-          if (item.outcome === "bounce") {
-            push("feed-bounce", "A move bounces.", item.order &&
-              item.order.power);
-          }
+          if (item.outcome !== "bounce") return;
+          var order = item.order || {};
+          var move = diploMoveWords(order);
+          push("feed-bounce", move ?
+            powerWord(order.power) + "'s " + move + " bounces." :
+            "A move bounces.", order.power);
         });
         (event.dislodged || []).forEach(function (item) {
-          push("feed-dislodge", powerWord(item.unit && item.unit.power) +
-            " is dislodged and must retreat.", item.unit && item.unit.power);
+          var unit = item.unit || {};
+          var where = diploProvinceWords(unit.province);
+          var from = diploProvinceWords(item.attackerFrom);
+          push("feed-dislodge", where ?
+            powerWord(unit.power) + "'s " + where +
+              " is dislodged by an attack out of " + (from || "next door") +
+              " and must retreat." :
+            powerWord(unit.power) + " is dislodged and must retreat.",
+          unit.power);
         });
-        (event.standoffs || []).forEach(function () {
-          push("feed-bounce", "STANDOFF — nothing enters.");
+        (event.standoffs || []).forEach(function (province) {
+          var where = diploProvinceWords(province);
+          push("feed-bounce", where ? "STANDOFF in " + where +
+            " — nothing enters." : "STANDOFF — nothing enters.");
         });
         (event.stabs || []).forEach(function (stab) {
           push("feed-stab", "STAB — " + powerWord(stab.power) +
             " promised " +
             (stab.pledgeTo < 0 ? "everyone" : powerWord(stab.pledgeTo)) +
-            " " + stab.kind + " and ordered " + stab.order + ".", stab.power);
+            " " + stab.kind + " and ordered " +
+            diploOrderWords(stab.order) + ".", stab.power);
         });
         break;
       }
       case "retreat":
-        push("feed-dislodge", powerWord(event.power) + " retreats " +
-          (event.moves || []).length + " unit" +
-          ((event.moves || []).length === 1 ? "" : "s") + ".", event.power);
+        (event.moves || []).forEach(function (move) {
+          var unit = move.unit || {};
+          var where = diploProvinceWords(unit.province);
+          var to = diploProvinceWords(move.to);
+          push("feed-dislodge", powerWord(event.power) + "'s " +
+            (where || "dislodged unit") +
+            (move.to >= 0 && to ? " retreats to " + to : " disbands") + ".",
+          event.power);
+        });
         break;
       case "build": {
-        var built = (event.adjustments || []).filter(function (a) {
-          return a.action === "build";
-        }).length;
-        var removed = (event.adjustments || []).length - built;
-        push("feed-build", powerWord(event.power) +
-          (built ? " builds " + built : "") +
-          (removed ? (built ? " and disbands " : " disbands ") + removed : "") +
-          (built || removed ? " unit" + ((built + removed) === 1 ? "" : "s") :
-            " makes no adjustment") + ".", event.power);
+        var acted = (event.adjustments || []).map(function (action) {
+          var unit = action.unit || {};
+          return (action.action === "build" ? "builds " : "disbands ") +
+            (unit.kind === "F" ? "a fleet in " : "an army in ") +
+            (diploProvinceWords(unit.province) || "the field");
+        });
+        push("feed-build", powerWord(event.power) + " " +
+          (acted.length ? acted.join(" and ") : "makes no adjustment") + ".",
+        event.power);
         break;
       }
       case "centres": {

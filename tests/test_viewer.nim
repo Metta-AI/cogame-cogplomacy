@@ -235,6 +235,7 @@ suite "the board art":
       let code = Provinces[index].code
       check provinces.hasKey(code)
       let entry = provinces[code]
+      check entry["id"].getInt() == index
       check entry["name"].getStr() == Provinces[index].name
       check entry["kind"].getStr() == $Provinces[index].kind
       check entry["centre"].getBool() == Provinces[index].isCentre

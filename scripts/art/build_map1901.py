@@ -207,6 +207,9 @@ def build():
             step = len(poly) / 24.0
             poly = [poly[int(i * step)] for i in range(24)]
         entry = {
+            # The province id the sim uses: events name provinces by id, so
+            # the viewer needs the same numbering to print their names.
+            "id": index,
             "name": name,
             "kind": kind,
             "centre": code in CENTRES,
