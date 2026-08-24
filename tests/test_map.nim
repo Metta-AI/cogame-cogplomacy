@@ -115,16 +115,22 @@ suite "split coasts":
     check fleetNodesOf(provinceByCode("SPA")).len == 2
     check fleetNodesOf(provinceByCode("PAR")).len == 0
 
-  test "a coast's fleet adjacency is a subset of the province's":
+  test "a coast's fleet adjacency is a PROPER part of the province's":
     for code in ["SPA", "STP", "BUL"]:
       let province = provinceByCode(code)
-      var whole: HashSet[int]
+      var whole = initHashSet[int]()
       for node in fleetNodesOf(province):
         for next in FleetAdj[node]:
           whole.incl(FleetNodeProvince[next])
       for node in fleetNodesOf(province):
+        var part = initHashSet[int]()
         for next in FleetAdj[node]:
-          check FleetNodeProvince[next] in whole
+          part.incl(FleetNodeProvince[next])
+        ## Each coast reaches some water, and strictly less of it than the
+        ## province as a whole — a coast that reached all of it would make
+        ## the split pointless, and that is what this pins.
+        check part.len > 0
+        check part < whole
 
   test "the coasts really are different water":
     ## St Petersburg's north coast reaches the Barents, its south coast the
