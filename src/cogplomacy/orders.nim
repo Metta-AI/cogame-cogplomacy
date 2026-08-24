@@ -461,17 +461,29 @@ type
     ok*: bool
     why*: string
 
+proc heldByDislodged(dislodged: seq[Dislodgement], unit: Unit,
+    province: int): bool =
+  ## A province another dislodged unit is still standing in. It is not empty
+  ## until that unit retreats or disbands, and standard Diplomacy bars a
+  ## retreat into an occupied province however its occupier got there.
+  for item in dislodged:
+    if item.unit.province == province and not sameUnit(item.unit, unit):
+      return true
+  false
+
 proc retreatDestinations*(board: Board, unit: Unit, attackerFrom: int,
-    standoffs: seq[int]): seq[tuple[province: int, coast: string]] =
+    standoffs: seq[int], dislodged: seq[Dislodgement]):
+    seq[tuple[province: int, coast: string]] =
   ## Legal retreat squares: adjacent and legal for the unit, empty after the
-  ## movement phase, not the attacker's origin, not a standoff province.
+  ## movement phase (of live units AND of units still awaiting a retreat),
+  ## not the attacker's origin, not a standoff province.
   if unit.kind == ukArmy:
     var dests = ArmyAdj[unit.province]
     dests.sort(proc (a, b: int): int = cmp(provinceCode(a), provinceCode(b)))
     for dest in dests:
       if dest == attackerFrom or dest in standoffs:
         continue
-      if board.unitAt(dest) >= 0:
+      if board.unitAt(dest) >= 0 or heldByDislodged(dislodged, unit, dest):
         continue
       result.add((dest, ""))
   else:
@@ -482,13 +494,14 @@ proc retreatDestinations*(board: Board, unit: Unit, attackerFrom: int,
       let dest = FleetNodeProvince[node]
       if dest == attackerFrom or dest in standoffs:
         continue
-      if board.unitAt(dest) >= 0:
+      if board.unitAt(dest) >= 0 or heldByDislodged(dislodged, unit, dest):
         continue
       result.add((dest, FleetNodeCoast[node]))
 
 proc legalRetreats*(board: Board, unit: Unit, attackerFrom: int,
-    standoffs: seq[int]): seq[string] =
-  for dest in retreatDestinations(board, unit, attackerFrom, standoffs):
+    standoffs: seq[int], dislodged: seq[Dislodgement]): seq[string] =
+  for dest in retreatDestinations(board, unit, attackerFrom, standoffs,
+      dislodged):
     result.add(unitLabel(unit) & " - " & locLabel(dest.province, dest.coast))
   result.add(unitLabel(unit) & " - D")
 
@@ -538,7 +551,8 @@ proc parseRetreat*(board: Board, power: int, raw: string,
   for item in dislodged:
     if sameUnit(item.unit, unit):
       attackerFrom = item.attackerFrom
-  for option in retreatDestinations(board, unit, attackerFrom, standoffs):
+  for option in retreatDestinations(board, unit, attackerFrom, standoffs,
+      dislodged):
     if option.province == dest.province and
         (dest.coast.len == 0 or dest.coast == option.coast):
       result.to = option.province

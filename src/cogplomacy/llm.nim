@@ -331,7 +331,7 @@ proc scriptedRetreats(sim: Sim, power: int, kind: ScriptKind): seq[string] =
     if item.unit.power != power:
       continue
     let options = retreatDestinations(sim.board, item.unit,
-      item.attackerFrom, sim.standoffs)
+      item.attackerFrom, sim.standoffs, sim.dislodged)
     var best = -1
     var bestCoast = ""
     var bestScore = Far
@@ -551,7 +551,7 @@ proc retreatBlock(sim: Sim, power: int): string =
       provinceName(item.unit.province) & " by an attack out of " &
       provinceName(item.attackerFrom) & ". Legal: " &
       legalRetreats(sim.board, item.unit, item.attackerFrom,
-        sim.standoffs).join(", ") & " (disband).")
+        sim.standoffs, sim.dislodged).join(", ") & " (disband).")
   lines.join("\n") & "\n\n"
 
 proc buildBlock(sim: Sim, power: int): string =

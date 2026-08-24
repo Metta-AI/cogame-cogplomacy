@@ -78,7 +78,8 @@ suite "3 three-way standoff":
     let dislodged = Unit(power: 3, kind: ukArmy,
       province: provinceByCode("PAR"), coast: "")
     var open: seq[string]
-    for option in retreatDestinations(after, dislodged, -1, adj.standoffs):
+    for option in retreatDestinations(after, dislodged, -1, adj.standoffs,
+        @[]):
       open.add(provinceCode(option.province))
     check "BUR" notin open
 
@@ -265,7 +266,7 @@ suite "19 retreat rules":
     var open: seq[string]
     let attacker = provinceByCode("PRU")
     for option in retreatDestinations(b, dislodged, attacker,
-        @[provinceByCode("UKR")]):
+        @[provinceByCode("UKR")], @[]):
       open.add(provinceCode(option.province))
     check "PRU" notin open        # the attacker's origin
     check "UKR" notin open        # a standoff province
@@ -273,6 +274,24 @@ suite "19 retreat rules":
     check "SIL" notin open        # occupied
     check "MOS" in open
     check "LVN" in open
+
+  test "a province another dislodged unit still stands in is barred":
+    ## Standard Diplomacy: a retreat may not enter an occupied province, and
+    ## a unit that has not retreated yet still occupies its own.
+    let b = board()
+    let one = Unit(power: 0, kind: ukArmy, province: provinceByCode("VIE"),
+      coast: "")
+    let two = Unit(power: 3, kind: ukArmy, province: provinceByCode("TYR"),
+      coast: "")
+    let both = @[
+      Dislodgement(unit: one, attackerFrom: provinceByCode("BUD")),
+      Dislodgement(unit: two, attackerFrom: provinceByCode("MUN"))]
+    var open: seq[string]
+    for option in retreatDestinations(b, one, provinceByCode("BUD"), @[],
+        both):
+      open.add(provinceCode(option.province))
+    check "TYR" notin open
+    check "BOH" in open
 
   test "two units retreating to the same province both disband":
     ## The rule lives in the sim; the enumeration above is what feeds it.
@@ -282,8 +301,8 @@ suite "19 retreat rules":
     let two = Unit(power: 3, kind: ukArmy, province: provinceByCode("BOH"),
       coast: "")
     var shared: seq[string]
-    for a in retreatDestinations(b, one, -1, @[]):
-      for c in retreatDestinations(b, two, -1, @[]):
+    for a in retreatDestinations(b, one, -1, @[], @[]):
+      for c in retreatDestinations(b, two, -1, @[], @[]):
         if a.province == c.province and provinceCode(a.province) notin shared:
           shared.add(provinceCode(a.province))
     check "TYR" in shared

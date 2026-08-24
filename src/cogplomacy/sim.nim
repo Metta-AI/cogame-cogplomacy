@@ -705,7 +705,11 @@ proc applyRetreats*(sim: var Sim, seat: int, raws: seq[string], notes: string,
   for raw in trimmed:
     if raw.runeLen > MaxOrderLen:
       continue
-    let parsed = parseRetreat(sim.board, power, raw, mine, sim.standoffs)
+    ## The whole dislodged list, not just this power's: parseRetreat picks
+    ## the power's own unit out of it, and every dislodged unit still
+    ## occupies its province until the retreats resolve.
+    let parsed = parseRetreat(sim.board, power, raw, sim.dislodged,
+      sim.standoffs)
     if not parsed.ok:
       continue
     if parsed.unit.province in handled:
