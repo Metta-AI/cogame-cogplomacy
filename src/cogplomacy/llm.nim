@@ -619,11 +619,10 @@ proc extractJsonObject*(text: string): JsonNode =
   let start = text.find('{')
   let stop = text.rfind('}')
   if start < 0 or stop <= start:
-    var head = text.strip()
-    if head.len > 160:
-      head = head[0 ..< 160] & "..."
+    ## Rune-cut, never byte-cut: a slice through a multi-byte character
+    ## would put invalid UTF-8 into the error text.
     raise newException(CogplomacyError, "no JSON object in response: " &
-      head.replace("\n", " "))
+      cleanText(oneLine(text), 160))
   parseJson(text[start .. stop])
 
 proc stringList(node: JsonNode, limit: int): seq[string] =
@@ -758,7 +757,7 @@ proc textOf(client: LlmClient, response: Response, error, url: string):
   if error.len > 0:
     raise newException(CogplomacyError, "llm transport: " & error)
   if response.code == 401 or response.code == 403:
-    let detail = response.body[0 .. min(response.body.high, 400)]
+    let detail = cleanText(oneLine(response.body), 400)
     if "Model access is denied" in response.body and
         client.tryNextBedrockModel("no model access"):
       raise newException(CogplomacyError,
@@ -767,12 +766,12 @@ proc textOf(client: LlmClient, response: Response, error, url: string):
     raise newException(CogplomacyError,
       "llm auth failed (" & $response.code & ") at " & url & ": " & detail)
   if response.code == 429:
-    let detail = response.body[0 .. min(response.body.high, 300)]
+    let detail = cleanText(oneLine(response.body), 300)
     discard client.tryNextBedrockModel("throttled")
     raise newException(CogplomacyError, "llm throttled (429): " & detail)
   if response.code < 200 or response.code >= 300:
     raise newException(CogplomacyError, "anthropic error " & $response.code &
-      ": " & response.body[0 .. min(response.body.high, 300)])
+      ": " & cleanText(oneLine(response.body), 300))
   let payload = parseJson(response.body)
   if payload{"stop_reason"}.getStr() == "refusal":
     raise newException(CogplomacyError, "anthropic refusal")
@@ -781,7 +780,7 @@ proc textOf(client: LlmClient, response: Response, error, url: string):
       result.add(contentBlock{"text"}.getStr())
   if payload{"stop_reason"}.getStr() == "max_tokens" and '{' notin result:
     raise newException(CogplomacyError, "reply cut off at max_tokens before " &
-      "any JSON: " & result[0 .. min(result.high, 160)].replace("\n", " "))
+      "any JSON: " & cleanText(oneLine(result), 160))
 
 proc decideAll*(
   client: LlmClient,

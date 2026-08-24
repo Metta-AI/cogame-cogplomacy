@@ -302,6 +302,14 @@ suite "reply parsing":
     check decision.pledges[0].kind == plPeace
     check decision.pledges[1].kind == plKeepOut
 
+  test "the error text for an unusable reply is cut on rune boundaries":
+    try:
+      discard extractJsonObject("🕊️".repeat(400))
+      check false
+    except CogplomacyError as error:
+      check validateUtf8(error.msg) == -1
+      check error.msg.runeLen <= 200
+
   test "a letter addressed to ALL is kept as a public letter":
     var sim = initSim(fixtureConfig(years = 1))
     let seat = sim.pendingSeats()[0]
