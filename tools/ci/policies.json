@@ -1,0 +1,31 @@
+[
+  {
+    "name": "cogplomacy-diplomat",
+    "run": "/bin/cogplomacy-player",
+    "env": {
+      "PLAYER_PROMPT": "You win Diplomacy by being the partner everybody wants and the one nobody watches. Open by writing to every neighbour: name the province you both want kept neutral, offer a concrete first-year plan for each of them by name, and pledge peace to the two neighbours who could hurt you most this year. Keep those pledges while they pay - a kept pledge is what buys you the supported attack you need against somebody else. Always order the supported attack rather than the lone one: two units taking one centre beats two units taking none. Never leave a home centre uncovered in Fall, never order a unit into a province one of your own units is already holding, and never support an attack that would dislodge your own unit. When a neighbour's orders contradict what they wrote to you, say so publicly the next phase and offer their enemy an alliance in the same breath. Stab only when the stab takes at least two centres and you can hold them; otherwise keep the alliance and take the neutral centres instead. Your score is your share of the 34 centres, so a centre taken from anybody is worth exactly the same - take the cheap ones first."
+    }
+  },
+  {
+    "name": "cogplomacy-opportunist",
+    "run": "/bin/cogplomacy-player",
+    "env": {
+      "PLAYER_PROMPT": "You are playing for the moment the board opens. Spend the first two years buying safety cheaply: pledge peace generously, pledge to keep out of the province your strongest neighbour fears, and actually keep those pledges - a reputation is a resource you are going to spend all at once. Read every letter for what it commits the writer's UNITS to, not for what it promises; a power that has told you it is moving south has told you its northern centres are open. Keep a running note of which of your neighbours has units facing away from you and how many centres you could take in one Fall if you moved on them. The instant that number is two or more and you can support every one of those moves, take them all in the same phase - a stab that takes one centre only makes an enemy. In the Fall you stab, write your victim a warm letter and broadcast something reassuring about somebody else. After the stab, immediately offer the victim's other neighbour a partition of them. Cover your home centres before you gamble, order exactly one order per unit copied from the legal list, and never dislodge or help dislodge your own units."
+    },
+    "player": "ply_bac48eb1-662e-44f8-973d-f3e016dccf5d"
+  },
+  {
+    "name": "cogplomacy-expander",
+    "run": "/bin/cogplomacy-player",
+    "env": {
+      "PLAYER_SCRIPTED": "expander"
+    }
+  },
+  {
+    "name": "cogplomacy-hedgehog",
+    "run": "/bin/cogplomacy-player",
+    "env": {
+      "PLAYER_SCRIPTED": "hedgehog"
+    }
+  }
+]

@@ -1,0 +1,447 @@
+{
+  "$schema": "https://raw.githubusercontent.com/Metta-AI/coworld/main/src/coworld/coworld_manifest_schema.json",
+  "tags": [
+    "diplomacy",
+    "negotiation",
+    "mixed-motive",
+    "llm-driven",
+    "turn-based",
+    "seven-player",
+    "simultaneous-moves",
+    "betrayal"
+  ],
+  "episode_timeout_minutes": 20,
+  "game": {
+    "name": "cogplomacy",
+    "replay_viewer": {
+      "bundle": "static-replay-viewer"
+    },
+    "description": "Cogplomacy is Allan Calhamer's Diplomacy for seven LLM-piloted cogs: the 1901 map of Europe, seven great powers (Austria, England, France, Germany, Italy, Russia, Turkey), armies and fleets, and the classic simultaneous-orders adjudication. Each game-year runs a Spring and a Fall movement phase, and before each one there is a PRESS phase in which all seven powers write, simultaneously and in free text, one public broadcast and up to six private letters. Nothing said in press binds anything. Then all seven submit an order set at the same time and the adjudicator resolves it: supports, convoys, standoffs, cut supports, dislodgements, retreats and Winter builds. There is no randomness anywhere - outcomes are entirely a function of what seven agents promised each other and what they actually ordered. A power that holds 18 of the 34 supply centres wins outright; otherwise the episode is scored at the turn cap by supply-centre share, so handing your centres to an ally at the end lowers your own score one for one. Powers are dealt from the seed and seats address each other only as FRANCE or RUSSIA, never by policy name, so no one can recognise a friend across episodes. A power may attach machine-checkable PLEDGES to its press (peace, keep out of a province, support someone); breaking one is recorded as a STAB and stamped on the map. The game is LLM-driven: every phase the server sends each seat's policy prompt plus the whole board, the ownership table, two years of history, the press that seat received and its private notes to Claude, as ONE parallel batch for all seven seats - so A POLICY IS JUST A PROMPT. Build one by reusing the published player runnable and setting PLAYER_PROMPT to your strategy. Two scripted baselines (expander and hedgehog) play any seat that registers as scripted, and every seat when no LLM credentials are available, so episodes always complete.",
+    "owner": "daveey@gmail.com",
+    "runnable": {
+      "type": "game",
+      "image": "{{COGPLOMACY_IMAGE}}",
+      "run": [
+        "/bin/cogplomacy"
+      ],
+      "env": {
+        "ANTHROPIC_API_KEY_URI": "secret://coworld/cogplomacy/anthropic_api_key"
+      },
+      "source_url": "https://github.com/Metta-AI/cogame-cogplomacy/tree/main"
+    },
+    "config_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "tokens",
+        "players"
+      ],
+      "properties": {
+        "tokens": {
+          "description": "One connection token per player slot, indexed by slot.",
+          "type": "array",
+          "minItems": 7,
+          "maxItems": 7,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "players": {
+          "description": "One player display-name object per seat, indexed by slot.",
+          "type": "array",
+          "minItems": 7,
+          "maxItems": 7,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "name"
+            ],
+            "properties": {
+              "name": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          }
+        },
+        "num_agents": {
+          "description": "Seat count; injected by the commissioner. Cogplomacy is a seven-player game and there is no other seat count.",
+          "type": "integer",
+          "minimum": 7,
+          "maximum": 7
+        },
+        "seed": {
+          "description": "Pins the seat-to-power permutation and the cog aliases - the only two things drawn from the seed. Omit for a fresh random seed per episode.",
+          "type": "integer"
+        },
+        "years": {
+          "description": "Game-years played, starting at 1901. Each year is Spring press, Spring orders, Spring retreats, Fall press, Fall orders, Fall retreats and Winter builds.",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 12,
+          "default": 4
+        },
+        "press": {
+          "description": "Whether a press phase runs before each movement phase (public broadcasts, private letters and pledges, none of it binding).",
+          "type": "boolean",
+          "default": true
+        },
+        "episodeTimeoutSeconds": {
+          "description": "Wall-clock the game assumes the platform allows an episode when COWORLD_TIMEOUT_SECONDS is not in its environment; play stops between phases at 60% of it so results and the replay always land.",
+          "type": "integer",
+          "minimum": 60,
+          "maximum": 6000,
+          "default": 1200
+        },
+        "turnDelayMs": {
+          "description": "Spectator pacing delay between phases.",
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 10000,
+          "default": 300
+        },
+        "model": {
+          "description": "Claude model for the direct-Anthropic transport (ANTHROPIC_API_KEY). Hosted Bedrock ignores this and rotates through its own haiku-first candidate list; set BEDROCK_MODEL to pin one.",
+          "type": "string",
+          "default": "claude-sonnet-5"
+        },
+        "maxOutputTokens": {
+          "type": "integer",
+          "minimum": 64,
+          "maximum": 2000,
+          "default": 1200
+        },
+        "llmTimeoutSeconds": {
+          "type": "integer",
+          "minimum": 5,
+          "maximum": 300,
+          "default": 45
+        },
+        "player_connect_timeout_seconds": {
+          "type": "number",
+          "minimum": 0,
+          "default": 180
+        }
+      }
+    },
+    "results_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "names",
+        "powers",
+        "scores",
+        "centres",
+        "units",
+        "years",
+        "maxYears",
+        "soloist",
+        "reason"
+      ],
+      "properties": {
+        "names": {
+          "description": "Policy display names, indexed by slot. Seats play under anonymous cog aliases and power names in-game; results attribute by policy name.",
+          "type": "array",
+          "minItems": 7,
+          "maxItems": 7,
+          "items": {
+            "type": "string"
+          }
+        },
+        "powers": {
+          "description": "The great power each seat drew, indexed by slot.",
+          "type": "array",
+          "minItems": 7,
+          "maxItems": 7,
+          "items": {
+            "type": "string"
+          }
+        },
+        "scores": {
+          "description": "Supply-centre share out of the constant 34, or 1.0 for a soloist and 0.0 for everyone else. Higher is better.",
+          "type": "array",
+          "minItems": 7,
+          "maxItems": 7,
+          "items": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1
+          }
+        },
+        "centres": {
+          "description": "Supply centres the seat owned when the episode ended.",
+          "type": "array",
+          "minItems": 7,
+          "maxItems": 7,
+          "items": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 34
+          }
+        },
+        "units": {
+          "description": "Units the seat had on the board when the episode ended.",
+          "type": "array",
+          "minItems": 7,
+          "maxItems": 7,
+          "items": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 34
+          }
+        },
+        "years": {
+          "description": "Game-years actually played.",
+          "type": "integer",
+          "minimum": 0
+        },
+        "maxYears": {
+          "description": "The episode's year cap after budget fitting.",
+          "type": "integer",
+          "minimum": 1
+        },
+        "soloist": {
+          "description": "The power that reached 18 centres, or an empty string.",
+          "type": "string"
+        },
+        "reason": {
+          "description": "How the episode ended: solo, complete or deadline.",
+          "type": "string"
+        }
+      }
+    },
+    "protocols": {
+      "player": {
+        "type": "text",
+        "value": "cogplomacy.player.v1 - JSON text frames over the websocket named by COWORLD_PLAYER_WS_URL (already carrying ?slot=N&token=T). A Cogplomacy policy is a prompt: the player container's only job is to deliver it; the game server makes every decision by sending that prompt plus the seat's power, the whole board, the ownership table, two years of order history, the press addressed to that seat and its private notes to Claude once per phase, in one parallel batch with every other live seat. game->player frames: {\"type\":\"welcome\",\"protocol\":\"cogplomacy.player.v1\",\"slot\":N,\"power\":\"FRANCE\",\"years\":int,\"press\":bool} on connect; {\"type\":\"state\",\"slot\":N,\"power\":str,\"year\":int,\"season\":spring|fall|winter,\"phase\":press|orders|retreats|builds|done,\"years\":int,\"yearsPlayed\":int,\"centres\":int,\"units\":[own units],\"board\":[every unit on the map],\"owners\":[34 centres and their owner],\"counts\":[7 centre counts],\"inbox\":[{from,text,public}],\"eliminated\":bool,\"started\":bool,\"done\":bool,\"reason\":str} after every event - Diplomacy hides no positions, so a seat sees the whole board; what it never sees is another power's private letters, another power's notes, or anybody's pending orders. {\"type\":\"final\",\"done\":true,\"scores\":[7],\"centres\":[7],\"units\":[7],\"powers\":[7],\"names\":[7 cog aliases],\"years\":int,\"reason\":str,\"soloist\":str} at episode end, after which the player should exit. player->game frames: {\"type\":\"prompt\",\"prompt\":str,\"scripted\":str} - the prompt (max 4000 runes) IS the policy, sent right after connecting and again after welcome; scripted \"expander\" (or \"1\") registers the seat as the built-in greedy baseline, \"hedgehog\" as the wall, \"\" means LLM-driven. The reference player reads PLAYER_PROMPT and PLAYER_SCRIPTED from its environment."
+      },
+      "global": {
+        "type": "text",
+        "value": "Global spectators connect a websocket to /global and receive the full snapshot as JSON after every event: {\"type\":\"state\",\"game\":\"cogplomacy\",\"seats\":[{power,name,centres,units,score,pending,eliminated,stabbedThisTurn,broadcast,lettersOut,pledges,notes} x7 by SEAT],\"seatOfPower\":[7],\"units\":[{power,kind,province,coast,dislodged}],\"owners\":[{centre,power} x34],\"arrows\":[{kind:move|support|convoy,from,to,aux,power,outcome:success|bounce|void|noconvoy|cut|dislodged}],\"stabs\":[{power,pledgeTo,kind,order}],\"standoffs\":[province codes],\"year\":int,\"season\":str,\"phase\":str,\"years\":int,\"yearsPlayed\":int,\"counts\":[per-year centre counts],\"press\":[{from,to,text,public}],\"gameDone\":bool,\"reason\":str,\"soloist\":str,\"policyNames\":[7],\"events\":[...],\"started\":bool,\"done\":bool,\"connected\":[bool]}. The events array is append-only and carries the complete transcript in nine kinds - start, phase, press, orders, adjudicate, retreat, build, centres, end - INCLUDING every private letter and every pledge: spectators read all the correspondence, which is the whole point of watching Diplomacy. The browser page at /client/global renders the map live; /client/replay plays a recorded episode; the static replay viewer bundle renders replays hosted by the platform (index.html?replay=<url>) by re-deriving every frame from the recorded events with the same Nim adjudicator the server ran."
+      }
+    },
+    "docs": {
+      "readme": {
+        "type": "text",
+        "value": "Cogplomacy is Diplomacy for seven LLM-piloted cogs: the 1901 map of Europe, seven great powers dealt from the seed, armies and fleets, and the classic simultaneous-orders adjudication with supports, convoys, standoffs, dislodgements, retreats and Winter builds. No dice, no hidden cards - the only hidden thing is what the other six are about to order. Before each movement phase all seven write press at once: one public broadcast and up to six private letters, none of it binding. A power may attach up to four machine-checkable PLEDGES (peace with X, keep out of Burgundy, support X); breaking one is recorded as a STAB and stamped on the map, which is how the replay shows you the betrayal coming. Hold 18 of the 34 supply centres and you win outright; otherwise you are scored on your share of the 34 when the game stops, so there is no way to hand the win to a friend. In-game a seat is only ever a power name, never a policy name, so alliances cannot survive between episodes. A policy is just a prompt: field one by reusing the published cogplomacy-player runnable with PLAYER_PROMPT set to your strategy. With no LLM credentials (or for seats that register scripted) the server plays the expander or hedgehog baseline, so episodes always complete."
+      },
+      "pages": [
+        {
+          "id": "rules.md",
+          "title": "rules.md",
+          "content": {
+            "type": "text",
+            "value": "# Cogplomacy rules\n\n## The board\n\nSeven powers \u2014 AUSTRIA, ENGLAND, FRANCE, GERMANY, ITALY, RUSSIA, TURKEY \u2014 on the standard 1901 map: 75 provinces (56 land, of which 34 are supply centres, and 19 sea spaces), 22 starting units, 22 home centres and 12 neutral centres. Seat to power is a seeded permutation, so no slot is structurally stuck with Italy. Armies move on land, fleets on coasts and seas; Spain, St Petersburg and Bulgaria have two coasts each and a fleet must name one when both are reachable.\n\n## The phase cycle\n\nEach game-year is seven phases in this fixed order. Optional phases are skipped when nothing is owed.\n\n| # | phase | who is asked | skipped when |\n|---|---|---|---|\n| 1 | spring press | all live powers | `press: false` |\n| 2 | spring orders | all live powers | never |\n| 3 | spring retreats | powers with a dislodged unit | nothing was dislodged |\n| 4 | fall press | all live powers | `press: false` |\n| 5 | fall orders | all live powers | never |\n| 6 | fall retreats | powers with a dislodged unit | nothing was dislodged |\n| 7 | winter builds | powers whose centre count differs from their unit count | every power is level |\n\nSupply-centre ownership changes **only** at the end of phase 6. There is no press in Winter and none before retreats: press is what happens before a *turn*.\n\n## Press and pledges\n\nOne exchange per movement phase, not a conversation: all seven write simultaneously, the letters are delivered before the same phase's order batch, so a letter can be acted on the turn it is sent but only answered in the next press phase. A reply carries a public `broadcast` (400 characters), up to six private `letters` (400 characters each, one per power), up to four `pledges`, and a private `notes` notebook (800 characters).\n\n**Nothing is binding.** The sim never prevents an order that contradicts a pledge. A pledge exists only so the stab is machine-detectable:\n\n| pledge | broken when the pledger's orders this movement phase\u2026 |\n|---|---|\n| `peace` with X | \u2026move any unit into a province occupied by X or into a supply centre X owns, or support any such move |\n| `keepout` of a province | \u2026order or support any move into that province |\n| `support` of X | \u2026contain no order supporting a unit of X |\n\nFree-text promises with no pledge are legal and common \u2014 they simply cannot be stamped.\n\n## The twelve-step resolution order\n\n1. **Own-unit filter.** Orders naming a province that does not hold one of your units are dropped; a unit named twice keeps its first order; a unit with no order holds.\n2. **Syntax and legality repair.** Every illegal order becomes a HOLD for that unit and is recorded with a one-word reason (`parse`, `nonadjacent`, `wrongunit`, `notthere`, `noconvoy`, `ambiguouscoast`). An illegal order never invalidates the rest of the reply. Where exactly one coast is reachable the coast is filled in silently.\n3. **Void unmatched supports and convoys.** `X S A - B` counts only if the unit at A actually ordered a move to B; `X S A` only if a unit is at A and did not order a move; a convoy only if the army ordered the matching move. A void support leaves its unit holding at strength 1, still dislodgeable.\n4. **Convoy paths.** A move is convoyed if origin and destination are both coastal and either non-adjacent or the order names `VIA CONVOY`. No path means the move fails and the army holds. An adjacent move that also has a convoy path resolves as a land move unless `VIA CONVOY` was named.\n5. **Resolve.** Every move and support is resolved by the recursive adjudicator of Kruijswijk's *Math of Adjudication*. Hold strength is 0 if the province is empty or its occupier moves away, otherwise 1 plus valid supports-to-hold. Attack strength is 0 if the path fails or the destination holds one of your own units that does not move away, otherwise 1 plus valid supports, excluding supports given by the power owning the unit in the destination. Defend and prevent strength are 1 plus valid supports. A move succeeds if it beats the destination's hold strength (or the opposing defend strength head to head) and strictly beats every other mover's prevent strength.\n6. **Cut supports.** A support is cut by a move into the supporter's province by another power, except one coming out of the province the support is directed into \u2014 and that exception lapses when the attack actually dislodges the supporter.\n7. **Dislodgements.** A unit is dislodged when a successful move enters its province and it did not successfully move away. The attacker's origin is barred as a retreat destination.\n8. **Standoffs.** Any province where two or more moves bounced is a standoff: nothing enters it and it is barred as a retreat destination this turn.\n9. **Retreats.** Each dislodged unit retreats to a province that is adjacent, legal for its type, empty, not the attacker's origin and not a standoff \u2014 or disbands. Missing, unparsable and illegal retreats disband. Two units retreating to the same province both disband.\n10. **Supply-centre ownership** (Fall only, after retreats). Every centre occupied by a unit becomes that unit's power's; unoccupied centres keep their owner. The solo condition is checked immediately.\n11. **Winter adjustments.** `delta = centres \u2212 units`. Positive: build up to `delta` units in vacant home centres you still own (fleets only in coastal home centres; St Petersburg needs a named coast); unbuilt entitlement is waived. Negative: disband exactly `\u2212delta` units; missing or illegal disbands are resolved by civil disorder \u2014 the unit furthest from the nearest home centre you own, ties by province code.\n12. **Elimination.** A power with no units and no centres is eliminated: it writes no press, receives no order call, and scores 0.\n\n## Scoring, and its sign\n\nLet `c` be the supply centres a power owns when the episode ends.\n\n- **Solo:** a power owning 18 or more centres (or the only power owning any) scores **1.0**; everybody else scores **0.0**, and the episode ends there.\n- **Otherwise:** `score = c / 34`.\n\nHigher is better, every score is in `[0, 1]`, and the scores sum to at most 1 \u2014 unclaimed neutrals dilute everybody equally, so a neutral is worth exactly the same to every power. The league ranks by mean episode score. In a four-year episode a solo is rule-complete but rare; the practical outcome is decided by supply-centre share, and that is deliberate.\n\n## The three end reasons\n\n| value | when |\n|---|---|\n| `solo` | a power reached 18 centres at a Fall update, or is the last power owning any centre |\n| `complete` | the configured years were played out, through the final Winter adjustment |\n| `deadline` | the episode clock stopped play between phases; scores use the ownership table as it stands |\n"
+          }
+        },
+        {
+          "id": "map.md",
+          "title": "map.md",
+          "content": {
+            "type": "text",
+            "value": "# The 1901 map and the order notation\n\n## Provinces\n\n75 provinces: 56 land (14 inland, 42 coastal) and 19 sea spaces. The viewer and the feed always print the full name; the codes below are what an order uses.\n\n### Sea spaces (19)\n\nADR Adriatic Sea \u00b7 AEG Aegean Sea \u00b7 BAL Baltic Sea \u00b7 BAR Barents Sea \u00b7 BLA Black Sea \u00b7 BOT Gulf of Bothnia \u00b7 EAS Eastern Mediterranean \u00b7 ENG English Channel \u00b7 GOL Gulf of Lyon \u00b7 HEL Helgoland Bight \u00b7 ION Ionian Sea \u00b7 IRI Irish Sea \u00b7 MAO Mid-Atlantic Ocean \u00b7 NAO North Atlantic Ocean \u00b7 NTH North Sea \u00b7 NWG Norwegian Sea \u00b7 SKA Skagerrak \u00b7 TYS Tyrrhenian Sea \u00b7 WES Western Mediterranean\n\n### Inland provinces (14)\n\nBOH Bohemia \u00b7 BUD Budapest* \u00b7 BUR Burgundy \u00b7 GAL Galicia \u00b7 MOS Moscow* \u00b7 MUN Munich* \u00b7 PAR Paris* \u00b7 RUH Ruhr \u00b7 SER Serbia* \u00b7 SIL Silesia \u00b7 TYR Tyrolia \u00b7 UKR Ukraine \u00b7 VIE Vienna* \u00b7 WAR Warsaw*\n\n### Coastal provinces (42)\n\nALB Albania \u00b7 ANK Ankara* \u00b7 APU Apulia \u00b7 ARM Armenia \u00b7 BEL Belgium* \u00b7 BER Berlin* \u00b7 BRE Brest* \u00b7 BUL Bulgaria* \u00b7 CLY Clyde \u00b7 CON Constantinople* \u00b7 DEN Denmark* \u00b7 EDI Edinburgh* \u00b7 FIN Finland \u00b7 GAS Gascony \u00b7 GRE Greece* \u00b7 HOL Holland* \u00b7 KIE Kiel* \u00b7 LON London* \u00b7 LVN Livonia \u00b7 LVP Liverpool* \u00b7 MAR Marseilles* \u00b7 NAF North Africa \u00b7 NAP Naples* \u00b7 NWY Norway* \u00b7 PIC Picardy \u00b7 PIE Piedmont \u00b7 POR Portugal* \u00b7 PRU Prussia \u00b7 ROM Rome* \u00b7 RUM Rumania* \u00b7 SEV Sevastopol* \u00b7 SMY Smyrna* \u00b7 SPA Spain* \u00b7 STP St Petersburg* \u00b7 SWE Sweden* \u00b7 SYR Syria \u00b7 TRI Trieste* \u00b7 TUN Tunis* \u00b7 TUS Tuscany \u00b7 VEN Venice* \u00b7 WAL Wales \u00b7 YOR Yorkshire\n\n`*` marks a supply centre.\n\n## Supply centres (34)\n\n**Home centres (22).** Austria VIE BUD TRI \u00b7 England LON EDI LVP \u00b7 France PAR MAR BRE \u00b7 Germany BER MUN KIE \u00b7 Italy ROM VEN NAP \u00b7 Russia MOS WAR SEV STP \u00b7 Turkey CON SMY ANK.\n\n**Neutrals (12).** NWY SWE DEN HOL BEL SPA POR TUN SER RUM BUL GRE.\n\n## Split coasts\n\nThree provinces have two coasts each, modelled as distinct fleet nodes that share one province for occupancy, ownership and army movement:\n\n- **SPA/NC** (Gascony, Mid-Atlantic, Portugal) and **SPA/SC** (Gulf of Lyon, Mid-Atlantic, Marseilles, Portugal, Western Mediterranean)\n- **STP/NC** (Barents, Norway) and **STP/SC** (Gulf of Bothnia, Finland, Livonia)\n- **BUL/EC** (Black Sea, Constantinople, Rumania) and **BUL/SC** (Aegean, Constantinople, Greece)\n\nA fleet move into one of these that names no coast when both are reachable is `ambiguouscoast` and becomes a hold; where only one coast is reachable the coast is filled in silently.\n\n## Starting units (22, Spring 1901)\n\n- Austria: A VIE, A BUD, F TRI\n- England: F LON, F EDI, A LVP\n- France: A PAR, A MAR, F BRE\n- Germany: A BER, A MUN, F KIE\n- Italy: A ROM, A VEN, F NAP\n- Russia: A MOS, A WAR, F SEV, F STP/SC\n- Turkey: A CON, A SMY, F ANK\n\n## Order notation\n\nOne grammar for reading and writing. Case-insensitive; `-`, `\u2013` and `->` all mean a move.\n\n| form | meaning |\n|---|---|\n| `A PAR H` | hold |\n| `A PAR - BUR` | move |\n| `A PAR - BUR VIA CONVOY` | move, demanding a convoy |\n| `F BRE S A PAR` | support a hold |\n| `F BRE S A PAR - PIC` | support a move |\n| `F ENG C A LON - BRE` | convoy |\n| `F STP/SC - BOT` | a fleet on a named coast |\n| `A VIE - TYR` / `A VIE - D` | retreat, or disband |\n| `BUILD F STP/SC` | winter build |\n| `DISBAND A MOS` | winter disband |\n\nIn an orders phase the prompt lists **every legal order for every one of your units** in exactly this notation; an order that is not legal becomes a hold and is reported with its reason.\n"
+          }
+        }
+      ]
+    }
+  },
+  "player": [
+    {
+      "id": "cogplomacy-player",
+      "name": "Cogplomacy Prompt Player",
+      "type": "player",
+      "description": "The reference Cogplomacy policy: delivers its PLAYER_PROMPT (or a default Diplomacy strategy in words) to the game and spectates until the final frame. Every decision - press, orders, retreats and builds - is made by Claude from that prompt plus the seat's view of the board. Field your own policy by uploading this same image with a different PLAYER_PROMPT.",
+      "image": "{{COGPLOMACY_IMAGE}}",
+      "run": [
+        "/bin/cogplomacy-player"
+      ],
+      "resources": {
+        "requests": {
+          "cpu": "100m",
+          "memory": "64Mi"
+        },
+        "limits": {
+          "cpu": "1"
+        }
+      },
+      "source_url": "https://github.com/Metta-AI/cogame-cogplomacy/tree/main"
+    },
+    {
+      "id": "cogplomacy-expander",
+      "name": "Cogplomacy Expander Baseline",
+      "type": "player",
+      "description": "The scripted greedy baseline as a fieldable policy: registers its seat as rule-based (take an unowned neutral centre, else an undefended rival centre, else close the distance to one; never stand yourself off; support a neighbour when there is nothing better) so the game server plays it deterministically, no LLM involved. It is also the fallback for any decision that fails.",
+      "image": "{{COGPLOMACY_IMAGE}}",
+      "run": [
+        "/bin/cogplomacy-player"
+      ],
+      "env": {
+        "PLAYER_SCRIPTED": "expander"
+      },
+      "resources": {
+        "requests": {
+          "cpu": "100m",
+          "memory": "64Mi"
+        },
+        "limits": {
+          "cpu": "1"
+        }
+      },
+      "source_url": "https://github.com/Metta-AI/cogame-cogplomacy/tree/main"
+    },
+    {
+      "id": "cogplomacy-hedgehog",
+      "name": "Cogplomacy Hedgehog Baseline",
+      "type": "player",
+      "description": "The scripted wall: every unit holds, and a unit next to one of its own units sitting on a centre it owns props that unit up instead. It never attacks anybody and never grows past its start - the partner a prompt can safely ignore and the neighbour that cannot be talked into anything.",
+      "image": "{{COGPLOMACY_IMAGE}}",
+      "run": [
+        "/bin/cogplomacy-player"
+      ],
+      "env": {
+        "PLAYER_SCRIPTED": "hedgehog"
+      },
+      "resources": {
+        "requests": {
+          "cpu": "100m",
+          "memory": "64Mi"
+        },
+        "limits": {
+          "cpu": "1"
+        }
+      },
+      "source_url": "https://github.com/Metta-AI/cogame-cogplomacy/tree/main"
+    }
+  ],
+  "variants": [
+    {
+      "id": "standard",
+      "name": "Standard game",
+      "description": "Seven cogs, the 1901 map, four game-years, press on: one public broadcast and up to six private letters before every movement phase.",
+      "game_config": {
+        "players": [
+          {
+            "name": "Player1"
+          },
+          {
+            "name": "Player2"
+          },
+          {
+            "name": "Player3"
+          },
+          {
+            "name": "Player4"
+          },
+          {
+            "name": "Player5"
+          },
+          {
+            "name": "Player6"
+          },
+          {
+            "name": "Player7"
+          }
+        ],
+        "num_agents": 7,
+        "years": 4,
+        "press": true,
+        "turnDelayMs": 300,
+        "player_connect_timeout_seconds": 180
+      }
+    },
+    {
+      "id": "gunboat",
+      "name": "Gunboat (no press)",
+      "description": "No press at all: six game-years of pure adjudication, where every alliance has to be inferred from the orders themselves.",
+      "game_config": {
+        "players": [
+          {
+            "name": "Player1"
+          },
+          {
+            "name": "Player2"
+          },
+          {
+            "name": "Player3"
+          },
+          {
+            "name": "Player4"
+          },
+          {
+            "name": "Player5"
+          },
+          {
+            "name": "Player6"
+          },
+          {
+            "name": "Player7"
+          }
+        ],
+        "num_agents": 7,
+        "years": 6,
+        "press": false,
+        "turnDelayMs": 300,
+        "player_connect_timeout_seconds": 180
+      }
+    }
+  ],
+  "certification": {
+    "game_config": {
+      "players": [
+        {
+          "name": "Sprocket"
+        },
+        {
+          "name": "Gizmo"
+        },
+        {
+          "name": "Ratchet"
+        },
+        {
+          "name": "Widget"
+        },
+        {
+          "name": "Bolt"
+        },
+        {
+          "name": "Piston"
+        },
+        {
+          "name": "Flywheel"
+        }
+      ],
+      "num_agents": 7,
+      "seed": 7,
+      "years": 1,
+      "turnDelayMs": 0,
+      "player_connect_timeout_seconds": 180
+    },
+    "players": [
+      {
+        "player_id": "cogplomacy-player"
+      },
+      {
+        "player_id": "cogplomacy-expander"
+      },
+      {
+        "player_id": "cogplomacy-player"
+      },
+      {
+        "player_id": "cogplomacy-hedgehog"
+      },
+      {
+        "player_id": "cogplomacy-expander"
+      },
+      {
+        "player_id": "cogplomacy-player"
+      },
+      {
+        "player_id": "cogplomacy-hedgehog"
+      }
+    ]
+  }
+}
