@@ -1519,7 +1519,14 @@
             nameMap.text(event.broadcast) + "”", event.power);
         }
         (event.letters || []).forEach(function (letter) {
-          if (letter.to < 0) return;
+          if (letter.to < 0) {
+            // The broadcast rides in this list too, and is already shown.
+            if (letter.text === event.broadcast) return;
+            push("feed-broadcast", powerWord(letter.from) +
+              " writes to everyone: “" + nameMap.text(letter.text) + "”",
+            letter.from);
+            return;
+          }
           push("feed-letter", powerWord(letter.from) + " → " +
             powerWord(letter.to) + " (private): “" +
             nameMap.text(letter.text) + "”", letter.from);

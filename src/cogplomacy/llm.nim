@@ -650,9 +650,14 @@ proc parsePress(sim: Sim, power: int, payload: JsonNode): Decision =
         break
       if item.kind != JObject:
         continue
-      let to = powerByName(item{"to"}.getStr())
-      if to < 0 or to == power:
-        continue
+      ## `to` is a power name or ALL (case-insensitive); an ALL letter is
+      ## published to everybody. Only an unknown recipient is dropped.
+      let toText = item{"to"}.getStr().strip().toUpperAscii()
+      var to = -1
+      if toText != "ALL":
+        to = powerByName(toText)
+        if to < 0 or to == power:
+          continue
       result.letters.add(Letter(fromPower: power, toPower: to,
         text: cleanText(oneLine(item{"text"}.getStr()), MaxLetterLen)))
   let pledges = payload{"pledges"}

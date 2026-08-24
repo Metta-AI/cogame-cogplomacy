@@ -350,16 +350,23 @@ suite "press":
     check pressEvent.letters.len == MaxLetters
     check pressEvent.pledges.len == MaxPledges
 
-  test "a letter to an unknown power is dropped":
+  test "a letter to an unknown power is dropped, one to ALL is published":
     var sim = initSim(fixtureConfig(years = 1))
     let seat = sim.pendingSeats()[0]
     sim.applyPress(seat, "", @[Letter(toPower: 99, text: "who?"),
-      Letter(toPower: -1, text: "nobody")], @[], "", true)
+      Letter(toPower: -1, text: "everybody hears this")], @[], "", true)
     var pressEvent: GameEvent
     for event in sim.events:
       if event.kind == evPress:
         pressEvent = event
-    check pressEvent.letters.len == 0
+    check pressEvent.letters.len == 1
+    check pressEvent.letters[0].toPower < 0
+    for power in 0 ..< Powers:
+      var seen = false
+      for letter in sim.inboxOf(power, true):
+        if letter.text == "everybody hears this":
+          seen = true
+      check seen
 
   test "a seat reads only what is addressed to it":
     var sim = initSim(fixtureConfig(years = 1))

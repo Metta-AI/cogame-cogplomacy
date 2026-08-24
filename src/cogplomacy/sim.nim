@@ -411,16 +411,22 @@ proc applyPress*(sim: var Sim, seat: int, broadcast: string,
   for letter in letters:
     if privateCount >= MaxLetters:
       break
-    if letter.toPower < 0 or letter.toPower >= Powers:
+    if letter.toPower >= Powers or letter.toPower == power:
       continue
-    if letter.toPower == power or letter.toPower in seenRecipients:
+    ## A letter addressed to ALL (`toPower < 0`) is published to everybody,
+    ## like the broadcast; a second letter to the same power is dropped.
+    let to = if letter.toPower < 0: -1 else: letter.toPower
+    if to >= 0 and to in seenRecipients:
       continue
     let body = cleanText(oneLine(letter.text), MaxLetterLen)
     if body.len == 0:
       continue
-    seenRecipients.add(letter.toPower)
+    if to < 0 and body == text:
+      continue     ## the broadcast is already published; never twice
+    if to >= 0:
+      seenRecipients.add(to)
     inc privateCount
-    kept.add(Letter(fromPower: power, toPower: letter.toPower, text: body))
+    kept.add(Letter(fromPower: power, toPower: to, text: body))
   var keptPledges: seq[Pledge]
   for pledge in pledges:
     if keptPledges.len >= MaxPledges:

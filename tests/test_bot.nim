@@ -302,6 +302,18 @@ suite "reply parsing":
     check decision.pledges[0].kind == plPeace
     check decision.pledges[1].kind == plKeepOut
 
+  test "a letter addressed to ALL is kept as a public letter":
+    var sim = initSim(fixtureConfig(years = 1))
+    let seat = sim.pendingSeats()[0]
+    let decision = sim.parseDecision(seat, %*{
+      "broadcast": "hello",
+      "letters": [{"to": "all", "text": "everybody hears this"},
+                  {"to": "ATLANTIS", "text": "nobody hears this"}]
+    })
+    check decision.letters.len == 1
+    check decision.letters[0].toPower < 0
+    check decision.letters[0].text == "everybody hears this"
+
   test "an over-long array is truncated from the end":
     var sim = initSim(fixtureConfig(years = 1, press = false))
     let seat = sim.pendingSeats()[0]
