@@ -184,6 +184,21 @@ jobs:
           SMOKE_SLUG: ${{ env.SLUG }}
         run: ./tools/ci/docker_smoke.sh "${IMAGE}:ci"
 
+      # The template smoke above checks what every game shares. This step
+      # adds what THIS game's design note asks for: results.json validating
+      # against the manifest's own results_schema, reason == "complete",
+      # seven scores, and a replay carrying the six keys the viewer needs.
+      # It lives here rather than in docker_smoke.sh so that script stays a
+      # verbatim copy of the coworld-builder template.
+      - name: Assert the smoke artifacts against the manifest
+        run: |
+          set -euo pipefail
+          python3 tools/ci/assert_smoke_artifacts.py \
+            --manifest coworld_manifest_template.json \
+            --results dist/smoke/results.json \
+            --replay dist/smoke/replay.json \
+            --seats 7
+
       # The replay this episode produced is the ONLY replay in CI that is
       # known to be a real, current-format episode of this game. wasm-viewer
       # downloads it and loads it in a browser, so the viewer is tested
