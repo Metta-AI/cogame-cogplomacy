@@ -49,6 +49,8 @@ The full rules, the twelve-step resolution order and the order notation are in
 [`docs/plans/2026-08-24-cogplomacy-design.md`](docs/plans/2026-08-24-cogplomacy-design.md) and in
 the manifest's `rules.md` / `map.md` pages.
 
+See [TRAINING.md](TRAINING.md) for complete native post-training exports.
+
 ## Layout
 
 ```
