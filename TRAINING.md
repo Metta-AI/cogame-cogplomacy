@@ -31,5 +31,36 @@ uv run --package metta-posttrain --extra train python -m metta_posttrain.train \
 
 The exporter retains the native order notation and prompts, including each
 seat's private notes and received letters. `gunboat` has no press phases.
-Numeric Metta RL and PufferLib training need a bounded action codec for this
-game's orders, retreats, builds, and press.
+
+## Numeric reinforcement learning
+
+`tools/train_bridge.nim` exposes 208 numeric values from the public board,
+phase, and the acting seat's power. The action selects the shipped expander
+or hedgehog strategy. All seven seats choose against the same pre-phase
+state; the native simulator then resolves orders, retreats, or builds. The
+text exporter above retains the full order and press vocabulary.
+
+```sh
+nim c -d:release --path:src -o:/tmp/cogplomacy-train-bridge tools/train_bridge.nim
+python3 tools/test_train_bridge.py /tmp/cogplomacy-train-bridge
+```
+
+From a Metta checkout with the Coworld training stack, pass absolute bridge
+and manifest paths to `recipes.external.coworld.train` for native PufferLib,
+or `recipes.external.coworld_metta_rl.train` for Metta RL. Use `players=7`,
+`max_decisions=300`, a timestep limit, and either variant ID. The bridge
+also publishes the hosted prompts as `messages` and `semantic_view`.
+
+## Local reinforcement learning proof
+
+Metta RL completed 512 timesteps per variant through the numeric bridge.
+Native PufferLib trained 4,096 CUDA timesteps per variant, then reloaded
+each checkpoint on held-out seeds 101 and 102:
+
+| Variant | Seed 101 score / performance / games | Seed 102 score / performance / games | Checkpoint SHA-256 |
+| --- | --- | --- | --- |
+| standard | 0.117647 / 0.558824 / 5 | 0.183824 / 0.591912 / 4 | `d018aa1924393757518be38199707fd75933037f2d946934faa84191af357392` |
+| gunboat | 0.073529 / 0.536765 / 4 | 0.117647 / 0.558824 / 4 | `e9392b4828f3dd578f6baf833ebd642e4d79acbb51ebc62ba93c88ba51d6ca85` |
+
+These short pilots verify training, checkpoint reload, and evaluation. They do
+not establish competitive policies.
