@@ -1,3 +1,5 @@
+import bitworld/decision_trajectory
+import cogplomacy/prompts
 import std/[json, strutils, unicode, unittest]
 import cogplomacy/llm
 import ../tools/tune_baselines
@@ -25,7 +27,8 @@ proc playEpisode(config: GameConfig, kinds: seq[ScriptKind]): Sim =
     inc guard
     let seats = result.pendingSeats()
     doAssert seats.len > 0, "no pending seats and the episode is not over"
-    let decisions = client.decideAll(result, seats, prompts, kinds)
+    var evidence: seq[seq[DecisionAttempt]]
+    let decisions = client.decideAll(PromptSelection(), result, seats, prompts, kinds, evidence)
     for index, seat in seats:
       let decision = decisions[index]
       case result.phase
@@ -261,7 +264,8 @@ suite "offline fallback":
     var prompts = newSeq[string](Seats)
     var kinds = newSeq[ScriptKind](Seats)
     let seats = sim.pendingSeats()
-    let decisions = client.decideAll(sim, seats, prompts, kinds)
+    var evidence: seq[seq[DecisionAttempt]]
+    let decisions = client.decideAll(PromptSelection(), sim, seats, prompts, kinds, evidence)
     check decisions.len == Seats
     ## Every one of them is a legal, applyable decision.
     for index, seat in seats:

@@ -1,3 +1,4 @@
+import cogplomacy/prompts
 import std/[json, sets, strutils, unicode, unittest]
 import cogplomacy/llm
 
@@ -457,7 +458,7 @@ suite "the two name spaces":
     while not sim.done and guard < 60:
       inc guard
       for seat in sim.pendingSeats():
-        let system = systemPrompt(sim, seat)
+        let system = systemPrompt(sim, seat, PromptSelection())
         let user = sim.userPrompt(seat, "an operator prompt")
         for index in 0 ..< Seats:
           check config.players[index].name notin system

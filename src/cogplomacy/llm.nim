@@ -19,9 +19,10 @@
 ## certification still completes - this fallback is load-bearing.
 
 import
-  std/[algorithm, json, os, strutils, unicode],
-  bitworld/runtime,
+  std/[algorithm, json, options, os, strutils, unicode],
+  bitworld/[runtime, decision_trajectory],
   curly,
+  prompts,
   sim
 
 export sim
@@ -450,7 +451,7 @@ proc seasonWord(season: Season): string =
   of seFall: "FALL"
   of seWinter: "WINTER"
 
-proc systemPrompt*(sim: Sim, seat: int): string =
+proc systemPrompt*(sim: Sim, seat: int, selection: PromptSelection): string =
   ## The in-game name space is anonymous: a seat is only ever a POWER. No
   ## policy name, player name or slot number is ever interpolated here.
   let power = sim.powerOf[seat]
@@ -459,10 +460,7 @@ proc systemPrompt*(sim: Sim, seat: int): string =
     if other != power:
       others.add(PowerNames[other])
   let othersText = others[0 ..< others.high].join(", ") & " and " & others[^1]
-  "You are " & PowerNames[power] & ", one of seven great powers in a game " &
-    "of Diplomacy on the 1901 map of\nEurope. The other powers are " &
-    othersText & ", each\nplayed by a different cog. You never learn who " &
-    "plays them.\n" & """
+  selection.introduction(PowerNames[power], othersText) & """
 Rules:
 - Armies move on land, fleets on coasts and seas. Every unit has equal
   strength; a unit moves into a province only if it out-supports whatever
@@ -741,6 +739,46 @@ proc parseDecision*(sim: Sim, seat: int, payload: JsonNode): Decision =
   of pkBuilds: parseBuildsReply(payload)
   of pkDone: Decision()
 
+proc decisionReply*(decision: Decision, phase: PhaseKind): JsonNode =
+  case phase
+  of pkPress:
+    var letters = newJArray()
+    for letter in decision.letters:
+      letters.add(%*{"to": (if letter.toPower < 0: "ALL" else: PowerNames[letter.toPower]),
+        "text": letter.text})
+    var pledges = newJArray()
+    for pledge in decision.pledges:
+      pledges.add(%*{"kind": $pledge.kind,
+        "to": (if pledge.toPower < 0: "ALL" else: PowerNames[pledge.toPower]),
+        "province": (if pledge.province < 0: "" else: provinceCode(pledge.province))})
+    %*{"broadcast": decision.broadcast, "letters": letters, "pledges": pledges,
+      "notes": decision.notes}
+  of pkOrders: %*{"orders": decision.orders, "notes": decision.notes}
+  of pkRetreats: %*{"retreats": decision.retreats, "notes": decision.notes}
+  of pkBuilds: %*{"adjustments": decision.adjustments, "notes": decision.notes}
+  of pkDone: raise newException(ValueError, "completed phase has no decision")
+
+proc executedReply*(event: GameEvent): JsonNode =
+  var decision = Decision(broadcast: event.broadcast,
+    pledges: event.pledges, orders: event.orders, notes: event.text)
+  for letter in event.letters:
+    if letter.toPower >= 0 or letter.text != event.broadcast:
+      decision.letters.add(letter)
+  case event.kind
+  of evPress, evOrders:
+    discard
+  of evRetreat:
+    for move in event.moves:
+      decision.retreats.add(unitLabel(move.unit) & " - " &
+        (if move.to < 0: "D" else: provinceCode(move.to) &
+          (if move.coast.len > 0: "/" & move.coast else: "")))
+  of evBuild:
+    for adjustment in event.adjustments:
+      decision.adjustments.add(adjustment.action.toUpperAscii() & " " & unitLabel(adjustment.unit))
+  else:
+    raise newException(ValueError, "event is not an accepted submission")
+  decision.decisionReply(event.phaseKind)
+
 # ---- Anthropic / Bedrock transport ------------------------------------------
 
 proc requestFor(client: LlmClient, system, user: string, slot: int):
@@ -810,10 +848,12 @@ proc textOf(client: LlmClient, response: Response, error, url: string):
 
 proc decideAll*(
   client: LlmClient,
+  selection: PromptSelection,
   sim: Sim,
   seats: seq[int],
   prompts: seq[string],
-  scripted: seq[ScriptKind]
+  scripted: seq[ScriptKind],
+  evidence: var seq[seq[DecisionAttempt]]
 ): seq[Decision] =
   ## One decision per seat in `seats`, in order, for the CURRENT phase.
   ## Every live seat's request goes out in ONE parallel batch — this is a
@@ -821,12 +861,23 @@ proc decideAll*(
   ## budget. Never raises: any failure falls back to the scripted baseline
   ## so the episode always advances.
   result = newSeq[Decision](seats.len)
+  evidence = newSeq[seq[DecisionAttempt]](seats.len)
   var open: seq[int]
   for index, seat in seats:
     let kind = scripted[seat]
     if kind != skNone or client.disabled:
       result[index] = scriptedDecision(sim, seat,
         (if kind == skNone: skExpander else: kind))
+      var entry = newDecisionAttempt("scripted", "scripted-" &
+        $(if kind == skNone: skExpander else: kind),
+        if kind == skNone: aoFallback else: aoTeacher)
+      entry.parsedAction = decisionReply(result[index], sim.phase)
+      entry.accepted = true
+      if kind != skNone:
+        entry.prompt = %*[{"role": "system", "content": systemPrompt(sim, seat, selection)},
+          {"role": "user", "content": userPrompt(sim, seat, prompts[seat])}]
+        entry.response = %($entry.parsedAction)
+      evidence[index].add(entry)
     else:
       open.add(index)
   for attempt in 0 .. 1:
@@ -839,17 +890,31 @@ proc decideAll*(
       if attempt > 0:
         user.add("\n\nYour previous reply was invalid. Respond with ONLY " &
           "the requested JSON object.")
-      let request = client.requestFor(systemPrompt(sim, seat), user, seat)
+      let system = systemPrompt(sim, seat, selection)
+      let request = client.requestFor(system, user, seat)
+      var entry = newDecisionAttempt("model-" & $attempt, "model", aoModel)
+      entry.prompt = %*[{"role": "system", "content": system},
+        {"role": "user", "content": user}]
+      entry.request = parseJson(request.body)
+      entry.model = some(if client.transport == ltBedrock:
+        client.bedrockModels[client.bedrockModel] else: client.model)
+      evidence[index].add(entry)
       batch.post(request.url, request.headers, request.body, $index)
     let responses = client.curl.makeRequests(batch, client.timeoutSeconds)
     var stillOpen: seq[int]
     for position, index in open:
       let seat = seats[index]
+      if responses[position].response.body.len > 0:
+        evidence[index][^1].rawResponse = %responses[position].response.body
       try:
         let text = client.textOf(responses[position].response,
           responses[position].error, batch[position].url)
+        evidence[index][^1].response = %text
         result[index] = sim.parseDecision(seat, extractJsonObject(text))
+        evidence[index][^1].parsedAction = decisionReply(result[index], sim.phase)
+        evidence[index][^1].accepted = true
       except CatchableError as error:
+        evidence[index][^1].rejectionReason = some(error.msg)
         echo "cogplomacy llm: seat ", seat, " attempt ", attempt,
           " failed: ", error.msg
         stillOpen.add(index)
@@ -858,3 +923,7 @@ proc decideAll*(
     let seat = seats[index]
     echo "cogplomacy: seat ", seat, " falling back to scripted decision"
     result[index] = scriptedDecision(sim, seat, skExpander)
+    var entry = newDecisionAttempt("fallback", "scripted-expander", aoFallback)
+    entry.parsedAction = decisionReply(result[index], sim.phase)
+    entry.accepted = true
+    evidence[index].add(entry)

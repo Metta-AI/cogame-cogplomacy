@@ -924,6 +924,52 @@ proc arrowsJson(sim: Sim): JsonNode =
     of okHold:
       discard
 
+proc observationJson*(sim: Sim, slot: int): JsonNode =
+  ## Diplomacy hides no positions: a seat sees the whole board and the whole
+  ## ownership table. What it never sees is another power's private letters,
+  ## another power's notes, or anybody's pending orders.
+  let power = sim.powerOf[slot]
+  var own = newJArray()
+  for unit in sim.board.units:
+    if unit.power == power:
+      own.add(%*{"kind": $unit.kind, "province": provinceCode(unit.province),
+        "coast": unit.coast})
+  var board = newJArray()
+  for unit in sim.board.units:
+    board.add(%*{"power": PowerNames[unit.power], "kind": $unit.kind,
+      "province": provinceCode(unit.province), "coast": unit.coast})
+  var owners = newJArray()
+  for slotIndex in 0 ..< NumCentres:
+    owners.add(%*{"centre": provinceCode(SupplyCentres[slotIndex]),
+      "power": (if sim.board.owner[slotIndex] < 0: ""
+                else: PowerNames[sim.board.owner[slotIndex]])})
+  var counts = newJArray()
+  for value in sim.resultsJson()["centres"]:
+    counts.add(value)
+  var inbox = newJArray()
+  for letter in sim.inboxOf(power, true):
+    inbox.add(%*{"from": PowerNames[letter.fromPower], "text": letter.text,
+      "public": letter.toPower < 0})
+  %*{
+    "type": "state",
+    "slot": slot,
+    "power": PowerNames[power],
+    "year": sim.year,
+    "season": $sim.season,
+    "phase": $sim.phase,
+    "years": sim.config.years,
+    "yearsPlayed": sim.yearsPlayed,
+    "centres": sim.centresOfPower(power),
+    "units": own,
+    "board": board,
+    "owners": owners,
+    "counts": counts,
+    "inbox": inbox,
+    "eliminated": sim.eliminated[power],
+    "done": sim.done,
+    "reason": sim.reason
+  }
+
 proc tableStateJson*(sim: Sim): JsonNode =
   ## The spectator frame. Every letter of the phase rides here, public and
   ## private — spectators read all the correspondence; the seats do not.

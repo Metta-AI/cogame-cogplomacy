@@ -159,6 +159,15 @@ jobs:
           nim c -d:release --path:src -o:/tmp/cogplomacy-train-bridge tools/train_bridge.nim
           python3 tools/test_train_bridge.py /tmp/cogplomacy-train-bridge
 
+      - name: Check full prompt variants and native private evidence
+        run: |
+          set -euo pipefail
+          python3 tools/test_prompt_variants.py /tmp/cogplomacy-train-bridge
+          nim c -d:release --threads:on --path:src -o:/tmp/cogplomacy-game src/cogplomacy.nim
+          nim c -d:release --threads:on --path:src -o:/tmp/cogplomacy-player src/cogplomacy_player.nim
+          python3 tools/test_prompt_native_games.py /tmp/cogplomacy-game \
+            /tmp/cogplomacy-player "${RUNNER_TEMP}/cogplomacy-prompts" "$(git rev-parse HEAD)"
+
   # ---------------------------------------------------------------------
   # Packaging smoke: the production image builds, and one real episode runs
   # end to end in raw docker with the certification fixture's seat mix.
