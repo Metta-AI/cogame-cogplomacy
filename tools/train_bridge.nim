@@ -1,3 +1,4 @@
+import cogplomacy/prompts
 ## Persistent numeric decision bridge over the native Cogplomacy simulator.
 
 import std/[json, os]
@@ -12,6 +13,9 @@ var
   decisionId: int
   choices: array[Seats, int]
   variant: string
+  selection: PromptSelection
+  languageMode: bool
+  proposals: array[Seats, Decision]
 
 proc seedOf(value: string): int =
   var hash = 2166136261'u32
@@ -21,9 +25,9 @@ proc seedOf(value: string): int =
 
 proc currentDecision(): JsonNode =
   let seat = seats[cursor]
-  let system = systemPrompt(game, seat)
+  let system = systemPrompt(game, seat, selection)
   let user = userPrompt(game, seat, "")
-  %*{"kind": "decision", "game": "cogplomacy",
+  result = %*{"kind": "decision", "game": "cogplomacy",
     "decision_id": decisionId, "seat": seat, "engine_seat": seat,
     "turn": (game.year - StartYear) * 8 + ord(game.season) * 4 + ord(game.phase),
     "semantic_view": {"system": system, "user": user},
@@ -35,7 +39,25 @@ proc currentDecision(): JsonNode =
       "choice": {"type": "integer", "minimum": 0, "maximum": 1}},
       "required": ["choice"]}, "typed_question": newJNull()}
 
+  if languageMode:
+    result["inference_mode"] = %"text_action"
+    result["semantic_view"] = game.observationJson(seat)
+    result["semantic_view"]["prompt_template"] = selection.promptMetadata(system, user)
+    result["action_schema"] = if game.phase == pkPress:
+      %*{"type": "object", "properties": {"broadcast": {"type": "string"},
+        "letters": {"type": "array"}, "pledges": {"type": "array"}, "notes": {"type": "string"}},
+        "anyOf": [{"required": ["broadcast"]}, {"required": ["letters"]}]}
+      else:
+        let key = case game.phase
+          of pkOrders: "orders"
+          of pkRetreats: "retreats"
+          of pkBuilds: "adjustments"
+          else: raise newException(ValueError, "completed phase has no decision")
+        %*{"type": "object", "required": [key], "properties": {
+          key: {"type": "array", "items": {"type": "string"}}, "notes": {"type": "string"}}}
+
 proc encoding(): JsonNode =
+  doAssert not languageMode
   let power = game.powerOf[seats[cursor]]
   var values = newJArray()
   for name in Variants:
@@ -65,6 +87,14 @@ proc encoding(): JsonNode =
 
 proc reset(request: JsonNode, manifestPath: string): JsonNode =
   doAssert request["players"].getInt() == Seats
+  selection = promptSelection(request)
+  let split = if request.hasKey("split"): request["split"].getStr() else: "train"
+  if split notin ["train", "validation", "test"]:
+    raise newException(ValueError, "split must be train, validation, or test")
+  if selection.selectedVariant in {pvHeldoutBriefing, pvHeldoutReference} and split == "train":
+    raise newException(ValueError, "held-out prompt variants are evaluation-only")
+  if not languageMode and selection.variant != pvCanonical:
+    raise newException(ValueError, "prompt variation requires --language")
   let manifest = parseFile(manifestPath)
   var variantConfig = newJNull()
   for entry in manifest["variants"]:
@@ -84,17 +114,25 @@ proc reset(request: JsonNode, manifestPath: string): JsonNode =
 proc step(request: JsonNode): JsonNode =
   doAssert request["decision_id"].getInt() == decisionId
   let action = parseJson(request["response"].getStr())
-  let choice = action["choice"].getInt()
-  doAssert choice in 0 .. 1
-  choices[seats[cursor]] = choice
+  var accepted = action
+  if languageMode:
+    proposals[seats[cursor]] = parseDecision(game, seats[cursor], action)
+    accepted = decisionReply(proposals[seats[cursor]], game.phase)
+  else:
+    let choice = action["choice"].getInt()
+    doAssert choice in 0 .. 1
+    choices[seats[cursor]] = choice
   inc cursor
   inc decisionId
   if cursor == seats.len:
     let phase = game.phase
     var decisions: seq[Decision]
     for seat in seats:
-      let kind = if choices[seat] == 0: skExpander else: skHedgehog
-      decisions.add(scriptedDecision(game, seat, kind))
+      if languageMode:
+        decisions.add(proposals[seat])
+      else:
+        let kind = if choices[seat] == 0: skExpander else: skHedgehog
+        decisions.add(scriptedDecision(game, seat, kind))
     for index, seat in seats:
       let decision = decisions[index]
       case phase
@@ -121,13 +159,15 @@ proc step(request: JsonNode): JsonNode =
     %*{"kind": "terminal", "scores": scores,
       "utilities": utilities}
   else: currentDecision()
-  %*{"kind": "accepted", "action": action,
+  %*{"kind": "accepted", "action": accepted,
     "observation": observation}
 
 when isMainModule:
   let args = commandLineParams()
-  if args.len != 2:
-    quit("usage: cogplomacy-train-bridge MANIFEST VARIANT", 1)
+  if args.len notin [2, 3]:
+    quit("usage: cogplomacy-train-bridge MANIFEST VARIANT [--language]", 1)
+  languageMode = args.len == 3
+  if languageMode: doAssert args[2] == "--language"
   let manifestPath = absolutePath(args[0])
   variant = args[1]
   doAssert variant in Variants
@@ -136,7 +176,10 @@ when isMainModule:
     let response = case request["kind"].getStr()
       of "reset": reset(request, manifestPath)
       of "encode": encoding()
-      of "teacher": %*{"response": $(%*{"choice": 0})}
+      of "teacher":
+        if languageMode:
+          %*{"response": $scriptedDecision(game, seats[cursor], skExpander).decisionReply(game.phase)}
+        else: %*{"response": $(%*{"choice": 0})}
       of "step": step(request)
       else: raise newException(ValueError, "unknown command")
     stdout.writeLine($response)
