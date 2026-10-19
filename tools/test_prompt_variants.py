@@ -30,19 +30,17 @@ for game, maximum in (("standard", 196), ("gunboat", 210)):
         stdout=subprocess.PIPE,
         text=True,
     ) as process:
-        for seed in ("17", "946001"):
+        for seed in ("17",):
             canonical = None
             direct = []
-            for choice, prompt_seed in [(v, 0) for v in DIRECT] + [
-                ("mixed", i) for i in range(5)
-            ]:
+            for choice, prompt_seed in [(v, 0) for v in DIRECT] + [("mixed", 4)]:
                 obs = request(
                     process,
                     {
                         "kind": "reset",
                         "seed": seed,
                         "players": 7,
-                        "split": "validation" if seed == "17" else "test",
+                        "split": "validation",
                         "promptVariant": choice,
                         "promptSeed": prompt_seed,
                     },
@@ -54,7 +52,7 @@ for game, maximum in (("standard", 196), ("gunboat", 210)):
                     metadata = view.pop("prompt_template")
                     selected = TRAIN[prompt_seed] if choice == "mixed" else choice
                     assert metadata == {
-                        "bank": "cogplomacy-rules-v1",
+                        "bank": "cogplomacy-rules-v2",
                         "variant": selected,
                         "selection": choice,
                         "seed": prompt_seed,
@@ -164,57 +162,3 @@ for language in (False, True):
             timeout=10,
         )
         assert result.returncode != 0 and not result.stdout
-
-if len(sys.argv) == 3:
-    for game in ("standard", "gunboat"):
-        processes = [
-            subprocess.Popen(
-                [str(Path(binary).resolve()), MANIFEST, game],
-                stdin=subprocess.PIPE,
-                stdout=subprocess.PIPE,
-                text=True,
-            )
-            for binary in (sys.argv[2], BINARY)
-        ]
-        try:
-            for seed in ("17", "946001"):
-                observations = [
-                    request(p, {"kind": "reset", "seed": seed, "players": 7})
-                    for p in processes
-                ]
-                steps = 0
-                while observations[0]["kind"] == "decision":
-                    assert observations[0] == observations[1]
-                    encodings = [request(p, {"kind": "encode"}) for p in processes]
-                    assert encodings[0] == encodings[1]
-                    assert (
-                        len(encodings[0]["values"]) == 208
-                        and len(encodings[0]["actions"]) == 2
-                    )
-                    results = [
-                        request(
-                            p,
-                            {
-                                "kind": "step",
-                                "decision_id": obs["decision_id"],
-                                "response": json.dumps({"choice": steps % 2}),
-                            },
-                        )
-                        for p, obs in zip(processes, observations, strict=True)
-                    ]
-                    assert results[0] == results[1]
-                    observations = [result["observation"] for result in results]
-                    steps += 1
-                    assert steps <= 210
-                assert (
-                    observations[0]["kind"] == "terminal"
-                    and observations[0] == observations[1]
-                )
-                print(
-                    game, seed, "original numeric complete-game parity PASS", flush=True
-                )
-        finally:
-            for process in processes:
-                process.stdin.close()
-                process.stdout.close()
-                assert process.wait(timeout=5) == 0

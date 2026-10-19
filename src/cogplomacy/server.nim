@@ -23,8 +23,8 @@
 ##                   that seat: "expander" / "1", or "hedgehog")
 
 import
-  std/[json, locks, options, os, sets, strutils, tables, times, unicode],
-  bitworld/[runtime, decision_trajectory],
+  std/[json, locks, os, sets, strutils, tables, times, unicode],
+  bitworld/runtime,
   curly,
   mummy,
   mummy/routers,
@@ -44,7 +44,6 @@ type
   GameState = object
     config: GameConfig
     selection: PromptSelection
-    trajectory: Option[DecisionTrajectory]
     sim: Sim
     prompts: seq[string]
     scripted: seq[ScriptKind]
@@ -170,14 +169,6 @@ proc finishEpisode(runtimeConfig: RuntimeConfig) =
     state.finished = true
     results = state.sim.resultsJson()
     replayData = state.replayPayload(results)
-    if state.trajectory.isSome:
-      var outcomes = newJObject()
-      for seat in 0 ..< Seats:
-        outcomes[$seat] = %*{"score": results["scores"][seat]}
-      state.trajectory.get().finish(
-        if results["reason"].getStr() in ["complete", "solo"]: esCompleted else: esTruncated,
-        results, outcomes)
-      state.trajectory.get().writeEventsToUri(getEnv(CogameSaveTrajectoryUriEnv))
 
     ## Send final frames to players BEFORE writing artifacts: the hosted
     ## worker tears player pods down as soon as results.json exists, and
@@ -333,18 +324,14 @@ proc runGame(runtimeConfig: RuntimeConfig) {.gcsafe.} =
       ## The slow part (Claude, ONE parallel batch for every live seat) runs
       ## outside the lock on a snapshot; only this thread mutates the sim, so
       ## the snapshot cannot go stale.
-      var evidence: seq[seq[DecisionAttempt]]
-      let decisions = client.decideAll(state.selection, simCopy, seats, prompts, scripted, evidence)
+      let decisions = client.decideAll(state.selection, simCopy, seats, prompts, scripted)
 
       withLock stateLock:
         for index, seat in seats:
-          let wasScripted = evidence[index][^1].origin in {aoTeacher, aoFallback}
-          let eventIndex = state.sim.events.len
-          var rejection = ""
+          let wasScripted = scripted[seat] != skNone or client.disabled
           try:
             applyDecision(state.sim, seat, decisions[index], wasScripted)
           except CatchableError as error:
-            rejection = error.msg
             echo "cogplomacy: reply rejected (", error.msg,
               "); using scripted fallback"
             try:
@@ -352,32 +339,6 @@ proc runGame(runtimeConfig: RuntimeConfig) {.gcsafe.} =
               applyDecision(state.sim, seat, fallback, true)
             except CatchableError as inner:
               echo "cogplomacy: scripted fallback failed: ", inner.msg
-          if state.trajectory.isSome:
-            let executed = executedReply(state.sim.events[eventIndex])
-            var attempts = evidence[index]
-            var selected = none(string)
-            var status = asFallback
-            var fallback = some("scripted-expander")
-            var promptAttempts = newJArray()
-            for entry in attempts.mitems:
-              if entry.accepted and (rejection.len > 0 or entry.parsedAction != executed):
-                let why = if rejection.len > 0: rejection else: "engine-normalized-submission"
-                entry.accepted = false
-                entry.rejectionReason = some(why)
-                fallback = some(if rejection.len > 0: "rejected-expander" else: why)
-              if entry.accepted and entry.origin != aoFallback:
-                selected = some(entry.attemptId)
-                status = asAccepted
-                fallback = none(string)
-              if entry.origin in {aoModel, aoTeacher}:
-                promptAttempts.add(%*{"attempt_id": entry.attemptId,
-                  "prompt_template": state.selection.promptMetadata(
-                    entry.prompt[0]["content"].getStr(), entry.prompt[1]["content"].getStr())})
-            var observation = simCopy.observationJson(seat)
-            observation["prompt_selection"] = state.selection.selectionMetadata()
-            observation["prompt_attempts"] = promptAttempts
-            state.trajectory.get().recordDecision($eventIndex, $seat, observation,
-              attempts, selected, executed, status, fallbackOrigin = fallback)
         state.broadcastLocked()
 
       ## Pace between phases so spectators can read the board.
@@ -601,10 +562,6 @@ proc runGameServer*(config: GameConfig, runtimeConfig: RuntimeConfig) =
   state.selection = promptSelection(parseJson(
     if runtimeConfig.config.len > 0: runtimeConfig.config else: "{}"))
   state.sim = initSim(config)
-  if getEnv(CogameSaveTrajectoryUriEnv).len > 0:
-    state.trajectory = some(newDecisionTrajectory(getEnv("COWORLD_EPISODE_ID"),
-      "cogplomacy-" & $config.seed, "cogplomacy", getEnv("COWORLD_GAME_VERSION"),
-      getEnv("COWORLD_SOURCE_REVISION")))
   state.prompts = newSeq[string](config.players.len)
   state.scripted = newSeq[ScriptKind](config.players.len)
   state.promptSeen = newSeq[bool](config.players.len)

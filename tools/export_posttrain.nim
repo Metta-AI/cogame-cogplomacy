@@ -1,7 +1,21 @@
-## Export complete engine-resolved episodes as private candidate evidence.
-import std/[json, options, os, osproc, strutils]
-import bitworld/decision_trajectory
-import cogplomacy/[sim, llm, prompts]
+## Export complete games with the exact hosted prompt at each phase.
+
+import std/[json, os, osproc, strutils]
+import cogplomacy/[llm, prompts]
+
+proc reply(phase: PhaseKind, decision: Decision): JsonNode =
+  case phase
+  of pkPress:
+    %*{"broadcast": decision.broadcast, "letters": [], "pledges": [],
+      "notes": decision.notes}
+  of pkOrders:
+    %*{"orders": decision.orders, "notes": decision.notes}
+  of pkRetreats:
+    %*{"retreats": decision.retreats, "notes": decision.notes}
+  of pkBuilds:
+    %*{"adjustments": decision.adjustments, "notes": decision.notes}
+  of pkDone:
+    raise newException(ValueError, "completed phase has no decision")
 
 when isMainModule:
   let args = commandLineParams()
@@ -10,18 +24,14 @@ when isMainModule:
   let output = args[0]
   let episodes = parseInt(args[1])
   let variant = args[2]
-  let selection = promptSelection(if args.len == 5:
+  let initialSelection = promptSelection(if args.len == 5:
     %*{"promptVariant": args[3], "promptSeed": parseInt(args[4])} else: newJObject())
-  if selection.selectedVariant in {pvHeldoutBriefing, pvHeldoutReference}:
+  if initialSelection.selectedVariant in {pvHeldoutBriefing, pvHeldoutReference}:
     raise newException(ValueError, "held-out prompt variants are evaluation-only")
-  doAssert episodes >= 10
-  doAssert not dirExists(output) and not fileExists(output)
-  let status = execCmdEx("git status --porcelain")
-  doAssert status.exitCode == 0 and status.output.strip().len == 0,
-    "Commit the qualified source before generating a pinned training corpus"
-  let head = execCmdEx("git rev-parse HEAD")
-  doAssert head.exitCode == 0
-  let revision = head.output.strip()
+  doAssert execProcess("git status --porcelain").strip().len == 0, "commit source before export"
+  if episodes < 10: quit("at least ten games are required", 1)
+  if dirExists(output) or fileExists(output):
+    quit("output already exists: " & output, 1)
   let manifest = parseFile("coworld_manifest_template.json")
   var variantConfig = newJNull()
   for entry in manifest["variants"]:
@@ -30,80 +40,89 @@ when isMainModule:
   doAssert variantConfig.kind == JObject
   createDir(output)
   setFilePermissions(output, {fpUserRead, fpUserWrite, fpUserExec})
+  let revision = execProcess("git rev-parse HEAD").strip()
   var
+    trainRows: seq[string]
+    validationRows: seq[string]
     runs = newJArray()
-  writePrivate(output / "trajectories.jsonl", "")
-  let stream = open(output / "trajectories.jsonl", fmAppend)
-  try:
-    for seed in 1 .. episodes:
-      variantConfig["seed"] = %seed
-      var config = defaultGameConfig()
-      config.update($variantConfig)
-      config = sampleEpisode(config)
-      var game = initSim(config)
-      let family = "cogplomacy-" & $seed
-      let episodeId = family & "-" & variant & "-" &
-        $selection.selectedVariant & "-" & $selection.seed
-      let trajectory = newDecisionTrajectory(episodeId, family, "cogplomacy",
-        "source-" & revision, revision)
-      var decisionId = 0
-      while not game.done:
-        let snapshot = game
-        let phase = game.phase
-        let seats = game.pendingSeats()
-        doAssert seats.len > 0
-        for seat in seats:
-          let baseline = if (seat + seed) mod 2 == 0: skExpander else: skHedgehog
-          let decision = scriptedDecision(snapshot, seat, baseline)
-          let reply = decisionReply(decision, phase)
-          let system = systemPrompt(snapshot, seat, selection)
-          let user = userPrompt(snapshot, seat, "")
-          let eventIndex = game.events.len
-          let parsed = parseDecision(snapshot, seat, reply)
-          case phase
-          of pkPress:
-            game.applyPress(seat, parsed.broadcast, parsed.letters,
-              parsed.pledges, parsed.notes, true)
-          of pkOrders:
-            game.applyOrders(seat, parsed.orders, parsed.notes, true)
-          of pkRetreats:
-            game.applyRetreats(seat, parsed.retreats, parsed.notes, true)
-          of pkBuilds:
-            game.applyBuilds(seat, parsed.adjustments, parsed.notes, true)
-          of pkDone:
-            raise newException(ValueError, "completed phase has pending seats")
-          let executed = executedReply(game.events[eventIndex])
-          var observation = snapshot.observationJson(seat)
-          observation["prompt_template"] = selection.promptMetadata(system, user)
-          var attempt = newDecisionAttempt($decisionId & "-teacher",
-            "scripted-" & $baseline, aoTeacher)
-          attempt.prompt = %*[{"role": "system", "content": system},
-            {"role": "user", "content": user}]
-          attempt.parsedAction = reply
-          attempt.response = %($reply)
-          attempt.accepted = reply == executed
-          if not attempt.accepted:
-            attempt.rejectionReason = some("engine-normalized-submission")
-          trajectory.recordDecision($decisionId, $seat, observation, @[attempt],
-            if attempt.accepted: some(attempt.attemptId) else: none(string),
-            executed, if attempt.accepted: asAccepted else: asFallback, game.done,
-            if attempt.accepted: none(string) else: some("engine-normalized-submission"))
-          inc decisionId
-      doAssert game.reason in ["complete", "solo"]
-      let results = game.resultsJson()
-      var participants = newJObject()
-      for seat in 0 ..< config.players.len:
-        participants[$seat] = %*{"score": results["scores"][seat]}
-      trajectory.finish(esCompleted, results, participants)
-      stream.write(trajectory.eventsJsonl())
-      runs.add(%*{"seed": seed, "years_played": game.yearsPlayed, "reason": game.reason,
-        "decisions": decisionId, "scores": results["scores"]})
-  finally:
-    stream.close()
-  writePrivate(output / "manifest.json", pretty(%*{
-    "schema_version": 1, "game": "cogplomacy", "variant": variant,
-    "source_revision": revision, "teacher": "expander-vs-hedgehog",
-    "prompt_selection": selection.selectionMetadata(),
-    "split_authority": "shared Coworld SDK and application importer by seed_family",
-    "runs": runs}) & "\n")
-  echo "complete games=", episodes
+  for seed in 1 .. episodes:
+    var selection = initialSelection
+    if selection.variant == pvMixed: selection.seed += seed - 1
+    let episode = "cogplomacy-" & variant & "-" & $seed & "-" &
+      $selection.selectedVariant & "-" & $selection.seed
+    variantConfig["seed"] = %seed
+    var config = defaultGameConfig()
+    config.update($variantConfig)
+    var game = initSim(config.sampleEpisode())
+    var rows: seq[string]
+    var decisionId, normalized = 0
+    var phases = 0
+    while not game.done:
+      inc phases
+      doAssert phases <= 200
+      let seats = game.pendingSeats()
+      doAssert seats.len > 0
+      let phase = game.phase
+      var decisions: seq[Decision]
+      var proposals: array[Seats, string]
+      var completions: array[Seats, JsonNode]
+      for seat in seats:
+        let baseline = if (seat + seed) mod 2 == 0:
+          skExpander else: skHedgehog
+        let teacher = scriptedDecision(game, seat, baseline)
+        let completion = reply(phase, teacher)
+        let accepted = parseDecision(game, seat, completion)
+        doAssert accepted.orders == teacher.orders
+        doAssert accepted.retreats == teacher.retreats
+        doAssert accepted.adjustments == teacher.adjustments
+        decisions.add(accepted)
+        completions[seat] = completion
+        proposals[seat] = $(%*{
+          "episode_id": episode,
+          "seed": "cogplomacy-" & $seed,
+          "decision_id": decisionId,
+          "prompt": [
+            {"role": "system", "content": systemPrompt(game, seat, selection)},
+            {"role": "user", "content": userPrompt(game, seat, "")}
+          ],
+          "completion": [{"role": "assistant", "content": $completion}],
+          "game": "cogplomacy", "action_schema_revision": "cogplomacy-reply-v1"
+        })
+        inc decisionId
+      for index, seat in seats:
+        let eventIndex = game.events.len
+        let decision = decisions[index]
+        case phase
+        of pkPress:
+          game.applyPress(seat, decision.broadcast, decision.letters,
+            decision.pledges, decision.notes, true)
+        of pkOrders:
+          game.applyOrders(seat, decision.orders, decision.notes, true)
+        of pkRetreats:
+          game.applyRetreats(seat, decision.retreats, decision.notes, true)
+        of pkBuilds:
+          game.applyBuilds(seat, decision.adjustments, decision.notes, true)
+        of pkDone:
+          raise newException(ValueError, "completed phase has pending seats")
+        if executedReply(game.events[eventIndex]) == completions[seat]:
+          rows.add(proposals[seat])
+        else:
+          inc normalized
+    doAssert game.reason == "complete" or game.reason == "solo"
+    if seed mod 5 == 0: validationRows.add(rows)
+    else: trainRows.add(rows)
+    var scores = newJArray()
+    for seat in 0 ..< Seats: scores.add(%game.score(seat))
+    runs.add(%*{"seed": seed, "episode": episode, "phases": phases,
+      "prompt_selection": selection.selectionMetadata(), "normalized_proposals": normalized, "decisions": rows.len,
+      "scores": scores, "reason": game.reason})
+  writeFile(output / "train.jsonl", trainRows.join("\n") & "\n")
+  writeFile(output / "validation.jsonl", validationRows.join("\n") & "\n")
+  writeFile(output / "manifest.json", pretty(%*{
+    "schema_version": 1,
+    "prompt_selection": initialSelection.selectionMetadata(), "game": "cogplomacy", "variant": variant,
+    "source_revision": revision, "teacher": "expander-and-hedgehog",
+    "train_examples": trainRows.len,
+    "validation_examples": validationRows.len, "runs": runs
+  }) & "\n")
+  echo "train=", trainRows.len, " validation=", validationRows.len
