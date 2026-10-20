@@ -22,6 +22,7 @@ import
   std/[algorithm, json, os, strutils, unicode],
   bitworld/runtime,
   curly,
+  prompts,
   sim
 
 export sim
@@ -450,7 +451,7 @@ proc seasonWord(season: Season): string =
   of seFall: "FALL"
   of seWinter: "WINTER"
 
-proc systemPrompt*(sim: Sim, seat: int): string =
+proc systemPrompt*(sim: Sim, seat: int, selection: PromptSelection): string =
   ## The in-game name space is anonymous: a seat is only ever a POWER. No
   ## policy name, player name or slot number is ever interpolated here.
   let power = sim.powerOf[seat]
@@ -459,31 +460,8 @@ proc systemPrompt*(sim: Sim, seat: int): string =
     if other != power:
       others.add(PowerNames[other])
   let othersText = others[0 ..< others.high].join(", ") & " and " & others[^1]
-  "You are " & PowerNames[power] & ", one of seven great powers in a game " &
-    "of Diplomacy on the 1901 map of\nEurope. The other powers are " &
-    othersText & ", each\nplayed by a different cog. You never learn who " &
-    "plays them.\n" & """
-Rules:
-- Armies move on land, fleets on coasts and seas. Every unit has equal
-  strength; a unit moves into a province only if it out-supports whatever
-  opposes it, and equal strength means a STANDOFF and nobody moves.
-- Orders: HOLD, MOVE, SUPPORT (a hold or a move) and CONVOY (a fleet at sea
-  carrying an army between coasts). All seven powers order at the same time
-  and see nothing of each other's orders until they resolve.
-- A supported attack that beats the defence DISLODGES the defender, which
-  must retreat or disband. You may never dislodge your own unit or help
-  anyone dislodge it.
-- After every Fall, whoever occupies a supply centre owns it. Owning more
-  centres than units lets you build at home in Winter; owning fewer forces
-  you to disband.
-- Hold 18 of the 34 supply centres and you win outright. Otherwise you are
-  scored on your share of the 34 centres when the game stops. Nothing else
-  scores.
-- PRESS IS NOT BINDING. You may promise anything to anyone and then order
-  the opposite. So may they. Alliances are the only way to grow and betrayal
-  is the only way to win.
-
-OUTPUT FORMAT: reply with ONLY one JSON object, nothing else — no
+  selection.introduction(PowerNames[power], othersText) & """
+""" & selection.rulesBriefing() & """OUTPUT FORMAT: reply with ONLY one JSON object, nothing else — no
 analysis, no explanation, no markdown fences, no text before or after the
 object. Your reply must begin with the character { and end with }."""
 
@@ -741,6 +719,46 @@ proc parseDecision*(sim: Sim, seat: int, payload: JsonNode): Decision =
   of pkBuilds: parseBuildsReply(payload)
   of pkDone: Decision()
 
+proc decisionReply*(decision: Decision, phase: PhaseKind): JsonNode =
+  case phase
+  of pkPress:
+    var letters = newJArray()
+    for letter in decision.letters:
+      letters.add(%*{"to": (if letter.toPower < 0: "ALL" else: PowerNames[letter.toPower]),
+        "text": letter.text})
+    var pledges = newJArray()
+    for pledge in decision.pledges:
+      pledges.add(%*{"kind": $pledge.kind,
+        "to": (if pledge.toPower < 0: "ALL" else: PowerNames[pledge.toPower]),
+        "province": (if pledge.province < 0: "" else: provinceCode(pledge.province))})
+    %*{"broadcast": decision.broadcast, "letters": letters, "pledges": pledges,
+      "notes": decision.notes}
+  of pkOrders: %*{"orders": decision.orders, "notes": decision.notes}
+  of pkRetreats: %*{"retreats": decision.retreats, "notes": decision.notes}
+  of pkBuilds: %*{"adjustments": decision.adjustments, "notes": decision.notes}
+  of pkDone: raise newException(ValueError, "completed phase has no decision")
+
+proc executedReply*(event: GameEvent): JsonNode =
+  var decision = Decision(broadcast: event.broadcast,
+    pledges: event.pledges, orders: event.orders, notes: event.text)
+  for letter in event.letters:
+    if letter.toPower >= 0 or letter.text != event.broadcast:
+      decision.letters.add(letter)
+  case event.kind
+  of evPress, evOrders:
+    discard
+  of evRetreat:
+    for move in event.moves:
+      decision.retreats.add(unitLabel(move.unit) & " - " &
+        (if move.to < 0: "D" else: provinceCode(move.to) &
+          (if move.coast.len > 0: "/" & move.coast else: "")))
+  of evBuild:
+    for adjustment in event.adjustments:
+      decision.adjustments.add(adjustment.action.toUpperAscii() & " " & unitLabel(adjustment.unit))
+  else:
+    raise newException(ValueError, "event is not an accepted submission")
+  decision.decisionReply(event.phaseKind)
+
 # ---- Anthropic / Bedrock transport ------------------------------------------
 
 proc requestFor(client: LlmClient, system, user: string, slot: int):
@@ -810,6 +828,7 @@ proc textOf(client: LlmClient, response: Response, error, url: string):
 
 proc decideAll*(
   client: LlmClient,
+  selection: PromptSelection,
   sim: Sim,
   seats: seq[int],
   prompts: seq[string],
@@ -839,7 +858,7 @@ proc decideAll*(
       if attempt > 0:
         user.add("\n\nYour previous reply was invalid. Respond with ONLY " &
           "the requested JSON object.")
-      let request = client.requestFor(systemPrompt(sim, seat), user, seat)
+      let request = client.requestFor(systemPrompt(sim, seat, selection), user, seat)
       batch.post(request.url, request.headers, request.body, $index)
     let responses = client.curl.makeRequests(batch, client.timeoutSeconds)
     var stillOpen: seq[int]

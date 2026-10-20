@@ -10,11 +10,18 @@ from tempfile import TemporaryDirectory
 for variant in ("standard", "gunboat"):
     with TemporaryDirectory() as temporary:
         output = Path(temporary) / variant
-        subprocess.run([sys.argv[1], str(output), "10", variant], check=True)
+        subprocess.run([sys.argv[1], str(output), "10", variant, "mixed", "0"], check=True)
         manifest = json.loads((output / "manifest.json").read_text())
         train = [json.loads(line) for line in (output / "train.jsonl").read_text().splitlines()]
         validation = [json.loads(line) for line in (output / "validation.jsonl").read_text().splitlines()]
         assert len(manifest["runs"]) == 10
+        wordings = {
+            run["episode"]: run["prompt_selection"]["variant"]
+            for run in manifest["runs"]
+        }
+        assert {wordings[row["episode_id"]] for row in train} == {
+            "canonical", "plain", "numbered", "questions", "reordered"
+        }
         assert manifest["train_examples"] == len(train) > 0
         assert manifest["validation_examples"] == len(validation) > 0
         assert {row["seed"] for row in train}.isdisjoint({row["seed"] for row in validation})

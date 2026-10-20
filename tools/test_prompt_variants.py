@@ -1,0 +1,164 @@
+"""Complete seven-power games preserve private press, orders, and outcomes across wording."""
+
+import hashlib
+import json
+from pathlib import Path
+import subprocess
+import sys
+
+BINARY = str(Path(sys.argv[1]).resolve())
+MANIFEST = str(Path(__file__).resolve().parents[1] / "coworld_manifest_template.json")
+TRAIN = ["canonical", "plain", "numbered", "questions", "reordered"]
+DIRECT = TRAIN + ["heldout-briefing", "heldout-reference"]
+POWERS = ["AUSTRIA", "ENGLAND", "FRANCE", "GERMANY", "ITALY", "RUSSIA", "TURKEY"]
+
+
+def request(process, command):
+    process.stdin.write(json.dumps(command) + "\n")
+    process.stdin.flush()
+    line = process.stdout.readline()
+    assert line, process.poll()
+    return json.loads(line)
+
+
+covered_phases = set()
+
+for game, maximum in (("standard", 196), ("gunboat", 210)):
+    with subprocess.Popen(
+        [BINARY, MANIFEST, game, "--language"],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        text=True,
+    ) as process:
+        for seed in ("17",):
+            canonical = None
+            direct = []
+            for choice, prompt_seed in [(v, 0) for v in DIRECT] + [("mixed", 4)]:
+                obs = request(
+                    process,
+                    {
+                        "kind": "reset",
+                        "seed": seed,
+                        "players": 7,
+                        "split": "validation",
+                        "promptVariant": choice,
+                        "promptSeed": prompt_seed,
+                    },
+                )
+                trace, systems = [], {}
+                while obs["kind"] == "decision":
+                    view = obs["semantic_view"]
+                    covered_phases.add(view["phase"])
+                    metadata = view.pop("prompt_template")
+                    selected = TRAIN[prompt_seed] if choice == "mixed" else choice
+                    assert metadata == {
+                        "bank": "cogplomacy-rules-v2",
+                        "variant": selected,
+                        "selection": choice,
+                        "seed": prompt_seed,
+                        "system_sha256": hashlib.sha256(
+                            obs["messages"][0]["content"].encode()
+                        ).hexdigest(),
+                        "user_sha256": hashlib.sha256(
+                            obs["messages"][1]["content"].encode()
+                        ).hexdigest(),
+                    }
+                    system, user = [message["content"] for message in obs["messages"]]
+                    assert systems.setdefault(obs["seat"], system) == system
+                    assert (
+                        "prompt_template" not in user and "prompt_selection" not in user
+                    )
+                    assert "DROPPED-SECRET-" not in user
+                    assert "DROPPED-SECRET-" not in json.dumps(view)
+                    power = view["power"]
+                    for index, sender in enumerate(POWERS):
+                        recipient = POWERS[(index + 1) % len(POWERS)]
+                        if power not in (sender, recipient):
+                            assert f"SECRET-{sender}" not in user
+                            assert all(
+                                f"SECRET-{sender}" not in letter["text"]
+                                for letter in view["inbox"]
+                            )
+                        if power != sender:
+                            assert f"PRIVATE-{sender}" not in user
+                    action = json.loads(
+                        request(process, {"kind": "teacher"})["response"]
+                    )
+                    action["notes"] = f"PRIVATE-{power}"
+                    if view["phase"] == "press":
+                        action["letters"] = [
+                            {
+                                "to": POWERS[(POWERS.index(power) + 1) % len(POWERS)],
+                                "text": f"SECRET-{power}",
+                            }
+                        ]
+                        action["letters"].append(
+                            {
+                                "to": action["letters"][0]["to"],
+                                "text": f"DROPPED-SECRET-{power}",
+                            }
+                        )
+                    response = request(
+                        process,
+                        {
+                            "kind": "step",
+                            "decision_id": obs["decision_id"],
+                            "response": json.dumps(action),
+                        },
+                    )
+                    assert response["kind"] == "accepted"
+                    assert response["action"]["notes"] == action["notes"]
+                    if view["phase"] == "press":
+                        assert response["action"]["letters"] == action["letters"]
+                    trace.append((view, user, response["action"]))
+                    assert len(trace) <= maximum
+                    obs = response["observation"]
+                assert obs["kind"] == "terminal" and trace and len(systems) == 7
+                outcome = trace, obs
+                if choice == "canonical":
+                    canonical = outcome
+                else:
+                    assert outcome == canonical
+                if choice == "mixed":
+                    assert systems == direct[prompt_seed]
+                else:
+                    assert systems not in direct
+                    direct.append(systems)
+                print(
+                    game,
+                    seed,
+                    choice,
+                    prompt_seed,
+                    len(trace),
+                    "complete-game decisions; private press/hash/action/outcome parity PASS",
+                    obs["scores"],
+                    flush=True,
+                )
+        process.stdin.close()
+        process.stdout.close()
+        assert process.wait(timeout=5) == 0
+
+assert covered_phases == {"press", "orders", "retreats", "builds"}, covered_phases
+print("all four decision phases exercised in complete games", flush=True)
+
+for language in (False, True):
+    invalids = [
+        {"promptVariant": value}
+        for value in ("heldout-briefing", "heldout-reference", "unknown", "mixed")
+    ]
+    invalids += [
+        {"promptVariant": "mixed", "promptSeed": value} for value in (-1, True, 1.5)
+    ]
+    invalids += [{"split": "unknown"}]
+    if not language:
+        invalids.append({"promptVariant": "plain"})
+    for invalid in invalids:
+        result = subprocess.run(
+            [BINARY, MANIFEST, "standard"] + (["--language"] if language else []),
+            input=json.dumps({"kind": "reset", "seed": "17", "players": 7} | invalid)
+            + "\n",
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        assert result.returncode != 0 and not result.stdout

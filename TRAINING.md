@@ -21,16 +21,36 @@ step on a tiny local model reduced validation loss from 5.5937 to 5.5037
 and 5.5368 to 5.4659. These short runs verify the training path, not policy
 quality.
 
-From a Metta checkout with `metta-posttrain` installed:
+Use the [post-training research package](https://github.com/Metta-AI/posttraining-research/tree/main/packages/metta-posttraining)
+for current training and adapter-packaging workflows.
 
-```sh
-uv run --package metta-posttrain --extra train python -m metta_posttrain.train \
-  --dataset /tmp/cogplomacy-data --output /tmp/cogplomacy-adapter \
-  --model Qwen/Qwen3-0.6B --max-steps 100 --max-length 8192
-```
 
 The exporter retains the native order notation and prompts, including each
 seat's private notes and received letters. `gunboat` has no press phases.
+
+## Prompt fuzzing
+
+Use `promptVariant` to select canonical, plain, numbered, questions, or reordered
+wording. Mixed selection requires a nonnegative `promptSeed`, independent of
+game randomness. One selection stays fixed across every power and phase.
+Heldout-briefing and heldout-reference are evaluation-only.
+
+The bank varies movement, support, simultaneous orders, retreats, Winter
+adjustments, scoring, and nonbinding diplomacy. Rule values and the JSON response
+contract stay fixed. Canonical wording preserves the original prompt.
+
+```sh
+python3 tools/test_prompt_variants.py /tmp/cogplomacy-train-bridge
+/tmp/cogplomacy-posttrain /tmp/cogplomacy-mixed 10 standard mixed 0
+```
+
+Mixed exports cycle through the five training wordings separately within each
+split. This prevents every-fifth-seed validation from excluding a training wording. The manifest records each selection and normalized-proposal counts.
+Only proposals matching the engine submission become training rows. Seed families
+keep both game variants and all wordings in the same data split.
+Existing complete-game checks cover phase transitions, private information,
+prompt hashes, and equivalent scripted outcomes. They do not measure learned
+robustness. Historical training scores above predate this filtering and wording bank.
 
 ## Numeric reinforcement learning
 
@@ -64,3 +84,6 @@ each checkpoint on held-out seeds 101 and 102:
 
 These short pilots verify training, checkpoint reload, and evaluation. They do
 not establish competitive policies.
+
+Episode IDs include requested selection, resolved wording, and prompt seed, so
+matched explicit and mixed collections remain distinct. Scenario families stay unchanged.
