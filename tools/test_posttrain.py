@@ -15,7 +15,13 @@ for variant in ("standard", "gunboat"):
         train = [json.loads(line) for line in (output / "train.jsonl").read_text().splitlines()]
         validation = [json.loads(line) for line in (output / "validation.jsonl").read_text().splitlines()]
         assert len(manifest["runs"]) == 10
-        assert [run["prompt_selection"]["variant"] for run in manifest["runs"]] == ["canonical", "plain", "numbered", "questions", "reordered"] * 2
+        wordings = {
+            run["episode"]: run["prompt_selection"]["variant"]
+            for run in manifest["runs"]
+        }
+        assert {wordings[row["episode_id"]] for row in train} == {
+            "canonical", "plain", "numbered", "questions", "reordered"
+        }
         assert manifest["train_examples"] == len(train) > 0
         assert manifest["validation_examples"] == len(validation) > 0
         assert {row["seed"] for row in train}.isdisjoint({row["seed"] for row in validation})

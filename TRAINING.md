@@ -48,8 +48,8 @@ python3 tools/test_prompt_variants.py /tmp/cogplomacy-train-bridge
 /tmp/cogplomacy-posttrain /tmp/cogplomacy-mixed 10 standard mixed 0
 ```
 
-Mixed exports cycle through the five training wordings within the requested game
-count. The manifest records each selection and normalized-proposal counts.
+Mixed exports cycle through the five training wordings separately within each
+split. This prevents every-fifth-seed validation from excluding a training wording. The manifest records each selection and normalized-proposal counts.
 Only proposals matching the engine submission become training rows. Seed families
 keep both game variants and all wordings in the same data split.
 Existing complete-game checks cover phase transitions, private information,
