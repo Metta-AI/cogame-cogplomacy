@@ -21,13 +21,9 @@ step on a tiny local model reduced validation loss from 5.5937 to 5.5037
 and 5.5368 to 5.4659. These short runs verify the training path, not policy
 quality.
 
-From a Metta checkout with `metta-posttrain` installed:
+Use the [post-training research package](https://github.com/Metta-AI/posttraining-research/tree/main/packages/metta-posttraining)
+for current training and adapter-packaging workflows.
 
-```sh
-uv run --package metta-posttrain --extra train python -m metta_posttrain.train \
-  --dataset /tmp/cogplomacy-data --output /tmp/cogplomacy-adapter \
-  --model Qwen/Qwen3-0.6B --max-steps 100 --max-length 8192
-```
 
 The exporter retains the native order notation and prompts, including each
 seat's private notes and received letters. `gunboat` has no press phases.
@@ -88,3 +84,6 @@ each checkpoint on held-out seeds 101 and 102:
 
 These short pilots verify training, checkpoint reload, and evaluation. They do
 not establish competitive policies.
+
+Episode IDs include requested selection, resolved wording, and prompt seed, so
+matched explicit and mixed collections remain distinct. Scenario families stay unchanged.
