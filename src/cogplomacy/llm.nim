@@ -19,11 +19,12 @@
 ## certification still completes - this fallback is load-bearing.
 
 import
-  std/[algorithm, json, os, strutils, unicode],
+  std/[algorithm, json, options, os, strutils, times, unicode],
   bitworld/runtime,
   curly,
   prompts,
-  sim
+  sim,
+  training
 
 export sim
 
@@ -40,6 +41,7 @@ type
     skHedgehog = "hedgehog"
 
   Decision* = object
+    scripted*: bool
     broadcast*: string
     letters*: seq[Letter]
     pledges*: seq[Pledge]
@@ -64,6 +66,7 @@ type
     maxOutputTokens: int
     timeoutSeconds: int
     disabled*: bool
+    nativeAttempts*: seq[seq[DecisionAttempt]]
 
 proc parseScriptKind*(text: string): ScriptKind =
   ## PLAYER_SCRIPTED values: "expander"/"1"/"true"/"yes" play the greedy
@@ -429,6 +432,7 @@ proc scriptedBuilds(sim: Sim, power: int, kind: ScriptKind): seq[string] =
 proc scriptedDecision*(sim: Sim, seat: int, kind: ScriptKind): Decision =
   ## Rule-based baseline for `seat`. Always legal; never talks or notes.
   let power = sim.powerOf[seat]
+  result.scripted = true
   case sim.phase
   of pkPress:
     discard
@@ -840,6 +844,8 @@ proc decideAll*(
   ## budget. Never raises: any failure falls back to the scripted baseline
   ## so the episode always advances.
   result = newSeq[Decision](seats.len)
+  let capture = getEnv(CogameSaveTrajectoryUriEnv).len > 0
+  if capture: client.nativeAttempts = newSeq[seq[DecisionAttempt]](Seats)
   var open: seq[int]
   for index, seat in seats:
     let kind = scripted[seat]
@@ -851,7 +857,9 @@ proc decideAll*(
   for attempt in 0 .. 1:
     if open.len == 0 or client.disabled:
       break
+    let started = epochTime()
     var batch: RequestBatch
+    var pendingEvidence: seq[DecisionAttempt]
     for index in open:
       let seat = seats[index]
       var user = sim.userPrompt(seat, prompts[seat])
@@ -859,19 +867,47 @@ proc decideAll*(
         user.add("\n\nYour previous reply was invalid. Respond with ONLY " &
           "the requested JSON object.")
       let request = client.requestFor(systemPrompt(sim, seat, selection), user, seat)
+      if capture:
+        pendingEvidence.add(nativeAttempt(sim.config.players[seat].name,
+          sim.events.len, seat, attempt, request.body))
       batch.post(request.url, request.headers, request.body, $index)
     let responses = client.curl.makeRequests(batch, client.timeoutSeconds)
+    let latency = int((epochTime() - started) * 1000.0)
     var stillOpen: seq[int]
     for position, index in open:
       let seat = seats[index]
+      var evidence: DecisionAttempt
+      if capture: evidence = pendingEvidence[position]
       try:
+        if capture:
+          evidence.receiveNativeResponse(responses[position].response,
+            responses[position].error, latency)
         let text = client.textOf(responses[position].response,
           responses[position].error, batch[position].url)
-        result[index] = sim.parseDecision(seat, extractJsonObject(text))
+        let payload = extractJsonObject(text)
+        result[index] = sim.parseDecision(seat, payload)
+        if capture:
+          evidence.parsedAction = result[index].decisionReply(sim.phase)
+          var candidate = copy(payload)
+          let defaults = if sim.phase == pkPress:
+            %*{"broadcast": "", "letters": [], "pledges": [], "notes": ""}
+            else: %*{"notes": ""}
+          for key, value in defaults:
+            if not candidate.hasKey(key): candidate[key] = value
+          if sim.phase == pkPress and candidate["pledges"].kind == JArray:
+            for pledge in candidate["pledges"]:
+              if pledge.kind == JObject:
+                if not pledge.hasKey("province"): pledge["province"] = %""
+                if not pledge.hasKey("to"): pledge["to"] = %"ALL"
+          evidence.accepted = candidate == evidence.parsedAction
+          if not evidence.accepted:
+            evidence.rejectionReason = some("native parser normalized the proposal")
       except CatchableError as error:
+        if capture: evidence.rejectionReason = some(error.msg)
         echo "cogplomacy llm: seat ", seat, " attempt ", attempt,
           " failed: ", error.msg
         stillOpen.add(index)
+      if capture: client.nativeAttempts[seat].add(evidence)
     open = stillOpen
   for index in open:
     let seat = seats[index]

@@ -1,5 +1,36 @@
 # Cogplomacy post-training
 
+## Authentic native model capture
+
+Set `COGAME_SAVE_TRAJECTORY_URI` on the ordinary server to retain private native
+requests, received responses, platform call IDs, applied actions and all retry,
+fallback and normalization evidence. All seven private views are frozen before
+any submission in each press/orders/retreats/builds phase. The native simultaneous
+batches, parser, complete horizon and game rules stay unchanged. Failed model
+decisions now stamp their actual scripted fallback provenance in the replay;
+their actions and outcomes stay the same with capture enabled or disabled.
+
+Only unchanged selected model replies can become targets. Optional omitted
+JSON fields receive native empty defaults for equality checks only; parser or
+engine repairs are excluded without rewriting the original response. Baselines
+remain unknown-origin, never model teachers. Missing usage is unknown. Join
+authenticated platform receipts before admitting any model label.
+
+The seed changes power/alias assignment, not the 1901 world. Native trace families
+therefore conservatively group all seed aliases by full year horizon and press
+setting. Do not claim independent randomized boards or separate identical-role
+self-play by requested seed. This coarse grouping can also keep distinct role
+assignments together; audit finer groups before claiming wider generalization.
+
+Compile the ordinary server/player and `tools/native_capture_fixture.nim`, then
+run `python3 tools/test_native_capture.py GAME PLAYER FIXTURE NEW_EVIDENCE_DIR`.
+The system workflow retains six complete server/player games, with capture on/off
+replay/result parity, all four phase kinds, retries, true fallback flags,
+normalization, private letters/notes, missing usage and credential-free fallback.
+The provider is synthetic test evidence, not an authentic model demonstration.
+Real model receipts, teacher quality, Qwen/SLIME preparation and learning require
+separate measurements. The older scripted exports below remain mechanics checks.
+
 `tools/export_posttrain.nim` plays ten complete native games for each
 certified variant. At every phase it captures the system and user prompts
 sent by the hosted game. The shipped expander and hedgehog policies supply
